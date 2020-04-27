@@ -1,16 +1,14 @@
 ﻿using System;
 using System.IO;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
-using ScreenToGif.FileWriters;
 using ScreenToGif.ImageUtil;
+using ScreenToGif.Model;
 using ScreenToGif.Util;
-using ScreenToGif.Util.Model;
 using ScreenToGif.Windows.Other;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using Timer = System.Windows.Forms.Timer;
@@ -29,20 +27,6 @@ namespace ScreenToGif.Windows
 
         #region Variables
 
-        #region Flags
-
-        /// <summary>
-        /// The actual stage of the program.
-        /// </summary>
-        public Stage Stage { get; set; }
-
-        /// <summary>
-        /// The action to be executed after closing this Window.
-        /// </summary>
-        public ExitAction ExitArg = ExitAction.Return;
-
-        #endregion
-
         #region Counters
 
         /// <summary>
@@ -51,11 +35,6 @@ namespace ScreenToGif.Windows
         private int? _snapDelay = null;
 
         #endregion
-
-        /// <summary>
-        /// The project information about the current recording.
-        /// </summary>
-        internal ProjectInfo Project { get; set; }
 
         /// <summary>
         /// The DPI of the current screen.
@@ -74,31 +53,22 @@ namespace ScreenToGif.Windows
 
         #region Inicialization
 
-        public Board(bool hideBackButton = false)
+        public Board(bool hideBackButton = true)
         {
             InitializeComponent();
 
             BackVisibility = hideBackButton ? Visibility.Collapsed : Visibility.Visible;
-            
+
             //Load
             _capture.Tick += Normal_Elapsed;
-
-            #region Temporary folder
-
-            if (string.IsNullOrWhiteSpace(UserSettings.All.TemporaryFolder))
-                UserSettings.All.TemporaryFolder = Path.GetTempPath();
-
-            Project = new ProjectInfo().CreateProjectFolder();
-
-            #endregion
         }
 
         private void Board_OnLoaded(object sender, RoutedEventArgs e)
         {
             _dpi = this.Dpi();
 
-            WidthIntegerBox.Scale = _dpi/96d;
-            HeightIntegerBox.Scale = _dpi/96d;
+            WidthIntegerBox.Scale = _dpi / 96d;
+            HeightIntegerBox.Scale = _dpi / 96d;
         }
 
         #endregion
@@ -117,7 +87,7 @@ namespace ScreenToGif.Windows
 
             using (var stream = new FileStream(fileName, FileMode.Create))
             {
-                var encoder = new BmpBitmapEncoder();
+                var encoder = new PngBitmapEncoder();
                 encoder.Frames.Add(BitmapFrame.Create(bitmap));
                 encoder.Save(stream);
                 stream.Flush();
@@ -141,6 +111,9 @@ namespace ScreenToGif.Windows
             try
             {
                 #region Remove all the files
+
+                if (Project == null)
+                    return;
 
                 foreach (var frame in Project.Frames)
                 {
@@ -199,7 +172,7 @@ namespace ScreenToGif.Windows
                 //if (!Settings.Default.Snapshot)
                 //{
                 //Only display the Record text when not in snapshot mode. 
-                Title = FindResource("Board.Title") as string;
+                Title = LocalizationHelper.Get("S.Board.Title");
                 //}
                 //else
                 //{
@@ -231,7 +204,8 @@ namespace ScreenToGif.Windows
                     _capture = new Timer { Interval = 1000 / FpsNumericUpDown.Value };
                     _snapDelay = null;
 
-                    Project = new ProjectInfo().CreateProjectFolder();
+                    Project?.Clear();
+                    Project = new ProjectInfo().CreateProjectFolder(ProjectByType.BoardRecorder);
 
                     HeightIntegerBox.IsEnabled = false;
                     WidthIntegerBox.IsEnabled = false;
@@ -246,17 +220,17 @@ namespace ScreenToGif.Windows
 
                     //if (!Settings.Default.Snapshot)
                     //{
-                        #region Normal Recording
+                    #region Normal Recording
 
-                        _capture.Tick += Normal_Elapsed;
-                        //Normal_Elapsed(null, null);
-                        _capture.Start();
+                    _capture.Tick += Normal_Elapsed;
+                    //Normal_Elapsed(null, null);
+                    _capture.Start();
 
-                        Stage = Stage.Recording;
+                    Stage = Stage.Recording;
 
-                        AutoFitButtons();
+                    AutoFitButtons();
 
-                        #endregion
+                    #endregion
                     //}
                     //else
                     //{
@@ -281,7 +255,7 @@ namespace ScreenToGif.Windows
                     #region To Pause
 
                     Stage = Stage.Paused;
-                    Title = FindResource("Recorder.Paused").ToString();
+                    Title = LocalizationHelper.Get("S.Recorder.Paused");
 
                     AutoFitButtons();
 
@@ -297,7 +271,7 @@ namespace ScreenToGif.Windows
                     #region To Record Again
 
                     Stage = Stage.Recording;
-                    Title = FindResource("Board.Title") as string;
+                    Title = LocalizationHelper.Get("S.Board.Title");
 
                     AutoFitButtons();
 
@@ -336,12 +310,7 @@ namespace ScreenToGif.Windows
 
                 if (Stage != Stage.Stopped && Stage != Stage.PreStarting && Project.Any)
                 {
-                    #region Stop
-
-                    ExitArg = ExitAction.Recorded;
-                    DialogResult = false;
-
-                    #endregion
+                    Close();
                 }
                 else if ((Stage == Stage.PreStarting || Stage == Stage.Snapping) && !Project.Any)
                 {
@@ -357,7 +326,7 @@ namespace ScreenToGif.Windows
                     IsRecording = false;
                     Topmost = true;
 
-                    Title = FindResource("Board.Title") as string + " ■";
+                    Title = LocalizationHelper.Get("S.Board.Title") + " ■";
 
                     AutoFitButtons();
 
@@ -366,12 +335,12 @@ namespace ScreenToGif.Windows
             }
             catch (NullReferenceException nll)
             {
-                ErrorDialog.Ok(FindResource("Board.Title") as string, "Error while stopping", nll.Message, nll);
+                ErrorDialog.Ok(LocalizationHelper.Get("S.Board.Title"), "Error while stopping", nll.Message, nll);
                 LogWriter.Log(nll, "NullPointer on the Stop function");
             }
             catch (Exception ex)
             {
-                ErrorDialog.Ok(FindResource("Board.Title") as string, "Error while stopping", ex.Message, ex);
+                ErrorDialog.Ok(LocalizationHelper.Get("S.Board.Title"), "Error while stopping", ex.Message, ex);
                 LogWriter.Log(ex, "Error on the Stop function");
             }
         }
@@ -401,7 +370,7 @@ namespace ScreenToGif.Windows
 
         private void Normal_Elapsed(object sender, EventArgs e)
         {
-            string fileName = $"{Project.FullPath}{FrameCount}.png";
+            var fileName = $"{Project.FullPath}{FrameCount}.png";
 
             //TODO: GetRender fails to create useful image when the control has decimals values as size.
 
@@ -421,21 +390,6 @@ namespace ScreenToGif.Windows
         private void LightWindow_SizeChanged(object sender, SizeChangedEventArgs e)
         {
             AutoFitButtons();
-        }
-
-        #endregion
-
-        #region Upper Grid Events
-
-        private void BoardTipColorBorder_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            var colorPicker = new ColorSelector(UserSettings.All.BoardColor) { Owner = this };
-            var result = colorPicker.ShowDialog();
-
-            if (result.HasValue && result.Value)
-            {
-                UserSettings.All.BoardColor = colorPicker.SelectedColor;
-            }
         }
 
         #endregion
@@ -478,12 +432,12 @@ namespace ScreenToGif.Windows
 
         private void CloseButton_Click(object sender, RoutedEventArgs e)
         {
-            DialogResult = true;
+            Close();
         }
 
         private void BackButton_Click(object sender, RoutedEventArgs e)
         {
-            DialogResult = false;
+            Close();
         }
 
         #endregion

@@ -8,12 +8,11 @@ namespace ScreenToGif.Controls
     {
         #region Variables
 
-        public Viewbox _viewbox;
-        public TextBlock _label;
-
-        public readonly static DependencyProperty ChildProperty;
-        public readonly static DependencyProperty TextProperty;
-        public readonly static DependencyProperty MaxSizeProperty;
+        public static readonly DependencyProperty ChildProperty = DependencyProperty.Register(nameof(Child), typeof(UIElement), typeof(ImageRadioButton), new FrameworkPropertyMetadata());
+        public static readonly DependencyProperty TextProperty = DependencyProperty.Register(nameof(Text), typeof(string), typeof(ImageRadioButton), new FrameworkPropertyMetadata("Button"));
+        public static readonly DependencyProperty ContentWidthProperty = DependencyProperty.Register(nameof(ContentWidth), typeof(double), typeof(ImageRadioButton), new FrameworkPropertyMetadata(26.0));
+        public static readonly DependencyProperty TextWrappingProperty = DependencyProperty.Register(nameof(TextWrapping), typeof(TextWrapping), typeof(ImageRadioButton), new FrameworkPropertyMetadata(TextWrapping.NoWrap,
+            FrameworkPropertyMetadataOptions.AffectsMeasure | FrameworkPropertyMetadataOptions.AffectsRender));
 
         #endregion
 
@@ -25,8 +24,8 @@ namespace ScreenToGif.Controls
         [Description("The Image of the button.")]
         public UIElement Child
         {
-            get { return (UIElement)GetValue(ChildProperty); }
-            set { SetCurrentValue(ChildProperty, value); }
+            get => (UIElement)GetValue(ChildProperty);
+            set => SetCurrentValue(ChildProperty, value);
         }
 
         /// <summary>
@@ -35,18 +34,28 @@ namespace ScreenToGif.Controls
         [Description("The text of the button.")]
         public string Text
         {
-            get { return (string)GetValue(TextProperty); }
-            set { SetCurrentValue(TextProperty, value); }
+            get => (string)GetValue(TextProperty);
+            set => SetCurrentValue(TextProperty, value);
         }
 
         /// <summary>
         /// The maximum size of the image.
         /// </summary>
         [Description("The maximum size of the image.")]
-        public double MaxSize
+        public double ContentWidth
         {
-            get { return (double)GetValue(MaxSizeProperty); }
-            set { SetCurrentValue(MaxSizeProperty, value); }
+            get => (double)GetValue(ContentWidthProperty);
+            set => SetCurrentValue(ContentWidthProperty, value);
+        }
+
+        /// <summary>
+        /// The TextWrapping property controls whether or not text wraps 
+        /// when it reaches the flow edge of its containing block box. 
+        /// </summary>
+        public TextWrapping TextWrapping
+        {
+            get => (TextWrapping)GetValue(TextWrappingProperty);
+            set => SetValue(TextWrappingProperty, value);
         }
 
         #endregion
@@ -54,18 +63,6 @@ namespace ScreenToGif.Controls
         static ImageRadioButton()
         {
             DefaultStyleKeyProperty.OverrideMetadata(typeof(ImageRadioButton), new FrameworkPropertyMetadata(typeof(ImageRadioButton)));
-
-            ChildProperty = DependencyProperty.Register("Child", typeof(UIElement), typeof(ImageRadioButton), new FrameworkPropertyMetadata());
-            TextProperty = DependencyProperty.Register("Text", typeof(string), typeof(ImageRadioButton), new FrameworkPropertyMetadata("Button"));
-            MaxSizeProperty = DependencyProperty.Register("MaxSize", typeof(double), typeof(ImageRadioButton), new FrameworkPropertyMetadata(26.0));
-        }
-
-        public override void OnApplyTemplate()
-        {
-            base.OnApplyTemplate();
-
-            _viewbox = Template.FindName("ViewBoxInternal", this) as Viewbox;
-            _label = Template.FindName("TextBlockInternal", this) as TextBlock;
         }
     }
 }

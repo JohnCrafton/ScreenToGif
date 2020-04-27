@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
-using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -10,10 +9,9 @@ using System.Windows.Input;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using Microsoft.Win32;
-using ScreenToGif.FileWriters;
+using ScreenToGif.Model;
 using ScreenToGif.Util;
 using ScreenToGif.Util.ActivityHook;
-using ScreenToGif.Util.Model;
 using ScreenToGif.Webcam.DirectX;
 using ScreenToGif.Windows.Other;
 using Timer = System.Windows.Forms.Timer;
@@ -24,38 +22,12 @@ namespace ScreenToGif.Windows
     {
         #region Variables
 
-        /// <summary>
-        /// The project information about the current recording.
-        /// </summary>
-        internal ProjectInfo Project { get; set; }
-
-        //private CaptureWebcam _capture = null;
         private Filters _filters;
 
         /// <summary>
         /// The object of the keyboard and mouse hooks.
         /// </summary>
         private readonly UserActivityHook _actHook;
-
-        #region Flags
-
-        public static readonly DependencyProperty StageProperty = DependencyProperty.Register("Stage", typeof(Stage), typeof(Webcam), new FrameworkPropertyMetadata(Stage.Stopped));
-
-        /// <summary>
-        /// The actual stage of the program.
-        /// </summary>
-        public Stage Stage
-        {
-            get { return (Stage)GetValue(StageProperty); }
-            set { SetValue(StageProperty, value); }
-        }
-
-        /// <summary>
-        /// The action to be executed after closing this Window.
-        /// </summary>
-        public ExitAction ExitArg = ExitAction.Return;
-
-        #endregion
 
         #region Counters
 
@@ -162,13 +134,13 @@ namespace ScreenToGif.Windows
         /// <summary>
         /// Default constructor.
         /// </summary>
-        public Webcam(bool hideBackButton = false)
+        public Webcam(bool hideBackButton = true)
         {
             InitializeComponent();
 
             _hideBackButton = hideBackButton;
 
-            //Load
+            //Load.
             _timer.Tick += Normal_Elapsed;
 
             #region Global Hook
@@ -181,25 +153,18 @@ namespace ScreenToGif.Windows
             catch (Exception) { }
 
             #endregion
-
-            #region Temporary folder
-
-            if (string.IsNullOrWhiteSpace(UserSettings.All.TemporaryFolder))
-                UserSettings.All.TemporaryFolder = Path.GetTempPath();
-
-            #endregion
         }
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
             if (_hideBackButton)
                 BackButton.Visibility = Visibility.Collapsed;
-            
+
             SystemEvents.PowerModeChanged += System_PowerModeChanged;
 
             #region DPI
 
-            var source = PresentationSource.FromVisual(Application.Current.MainWindow);
+            var source = PresentationSource.FromVisual(this);
 
             if (source?.CompositionTarget != null)
                 _scale = source.CompositionTarget.TransformToDevice.M11;
@@ -230,13 +195,12 @@ namespace ScreenToGif.Windows
             if (!IsActive)
                 return;
 
-            if (Keyboard.Modifiers != ModifierKeys.None || Keyboard.IsKeyDown(Key.LWin))
-                return;
-
-            if (e.Key == UserSettings.All.StartPauseShortcut)
+            if (Stage != Stage.Discarding && Keyboard.Modifiers.HasFlag(UserSettings.All.StartPauseModifiers) && e.Key == UserSettings.All.StartPauseShortcut)
                 RecordPauseButton_Click(null, null);
-            else if (e.Key == UserSettings.All.StopShortcut)
+            else if (Keyboard.Modifiers.HasFlag(UserSettings.All.StopModifiers) && e.Key == UserSettings.All.StopShortcut)
                 Stop_Executed(null, null);
+            else if ((Stage == Stage.Paused || Stage == Stage.Snapping) && Keyboard.Modifiers.HasFlag(UserSettings.All.DiscardModifiers) && e.Key == UserSettings.All.DiscardShortcut)
+                DiscardButton_Click(null, null);
         }
 
         #endregion
@@ -256,8 +220,11 @@ namespace ScreenToGif.Windows
                 WebcamControl.VideoDevice = _filters.VideoInputDevices[VideoDevicesComboBox.SelectedIndex];
                 WebcamControl.Refresh();
 
-                Width = WebcamControl.VideoWidth * _scale / 2;
-                Height = (WebcamControl.VideoHeight + 31) * _scale / 2;
+                if (WebcamControl.VideoWidth > 0)
+                {
+                    Width = WebcamControl.VideoWidth * _scale / 2;
+                    Height = (WebcamControl.VideoHeight + 31) * _scale / 2;
+                }
 
                 if (Top < 0)
                     Top = 0;
@@ -405,7 +372,18 @@ namespace ScreenToGif.Windows
                 DiscardButton.BeginStoryboard(FindResource("HideDiscardStoryboard") as Storyboard, HandoffBehavior.Compose);
 
                 Cursor = Cursors.Arrow;
-                Title = "Screen To Gif";
+
+                //if (!UserSettings.All.SnapshotMode)
+                {
+                    //Only display the Record text when not in snapshot mode. 
+                    Title = "ScreenToGif";
+                    Stage = Stage.Stopped;
+                }
+                //else
+                {
+                    //Stage = Stage.Snapping;
+                    //EnableSnapshot_Executed(null, null);
+                }
 
                 GC.Collect();
             });
@@ -419,16 +397,16 @@ namespace ScreenToGif.Windows
 
         private void Normal_Elapsed(object sender, EventArgs e)
         {
-            string fileName = $"{Project.FullPath}{_frameCount}.png";
+            var fileName = $"{Project.FullPath}{_frameCount}.png";
             Project.Frames.Add(new FrameInfo(fileName, _timer.Interval));
 
             //Get the actual position of the form.
-            var lefttop = Dispatcher.Invoke(() => new System.Drawing.Point((int)Math.Round((Left + _offsetX) * _scale, MidpointRounding.AwayFromZero), 
-                (int)Math.Round((Top + _offsetY) * _scale,  MidpointRounding.AwayFromZero)));
+            var lefttop = Dispatcher.Invoke(() => new System.Drawing.Point((int)Math.Round((Left + _offsetX) * _scale, MidpointRounding.AwayFromZero),
+                (int)Math.Round((Top + _offsetY) * _scale, MidpointRounding.AwayFromZero)));
 
             //Take a screenshot of the area.
-            var bt = Native.Capture(new System.Windows.Size((int)Math.Round(WebcamControl.ActualWidth * _scale, MidpointRounding.AwayFromZero),
-                (int)Math.Round(WebcamControl.ActualHeight * _scale, MidpointRounding.AwayFromZero)), lefttop.X, lefttop.Y);
+            var bt = Native.Capture((int)Math.Round(WebcamControl.ActualWidth * _scale, MidpointRounding.AwayFromZero),
+                (int)Math.Round(WebcamControl.ActualHeight * _scale, MidpointRounding.AwayFromZero), lefttop.X, lefttop.Y);
 
             _addDel.BeginInvoke(fileName, new Bitmap(bt), null, null); //CallBack
             //_addDel.BeginInvoke(fileName, new Bitmap(WebcamControl.Capture.GetFrame()), CallBack, null);
@@ -436,7 +414,7 @@ namespace ScreenToGif.Windows
 
             //ThreadPool.QueueUserWorkItem(delegate { AddFrames(fileName, new Bitmap(_capture.GetFrame())); });
 
-            Dispatcher.Invoke(() => Title = $"Screen To Gif • {_frameCount}");
+            Dispatcher.Invoke(() => Title = $"ScreenToGif • {_frameCount}");
 
             _frameCount++;
             GC.Collect(1);
@@ -448,7 +426,7 @@ namespace ScreenToGif.Windows
 
         private void BackButton_OnClick(object sender, RoutedEventArgs e)
         {
-            DialogResult = false;
+            Close();
         }
 
         private void ScaleButton_Click(object sender, RoutedEventArgs e)
@@ -466,7 +444,7 @@ namespace ScreenToGif.Windows
 
                 _timer = new Timer { Interval = 1000 / FpsNumericUpDown.Value };
 
-                Project = new ProjectInfo().CreateProjectFolder();
+                Project = new ProjectInfo().CreateProjectFolder(ProjectByType.WebcamRecorder);
 
                 RefreshButton.IsEnabled = false;
                 VideoDevicesComboBox.IsEnabled = false;
@@ -496,7 +474,7 @@ namespace ScreenToGif.Windows
                     #region SnapShot Recording
 
                     Stage = Stage.Snapping;
-                    Title = "Screen To Gif - " + FindResource("Recorder.Snapshot");
+                    Title = "ScreenToGif - " + LocalizationHelper.Get("S.Recorder.Snapshot");
 
                     Normal_Elapsed(null, null);
 
@@ -512,7 +490,7 @@ namespace ScreenToGif.Windows
                 #region To Pause
 
                 Stage = Stage.Paused;
-                Title = FindResource("Recorder.Paused").ToString();
+                Title = LocalizationHelper.Get("S.Recorder.Paused");
 
                 DiscardButton.BeginStoryboard(FindResource("ShowDiscardStoryboard") as Storyboard, HandoffBehavior.Compose);
 
@@ -525,7 +503,7 @@ namespace ScreenToGif.Windows
                 #region To Record Again
 
                 Stage = Stage.Recording;
-                Title = "Screen To Gif";
+                Title = "ScreenToGif";
 
                 _timer.Start();
 
@@ -569,12 +547,8 @@ namespace ScreenToGif.Windows
 
                 if (Stage != Stage.Stopped && Stage != Stage.PreStarting && Project.Any)
                 {
-                    #region If not Already Stoped nor Pre Starting and FrameCount > 0, Stops
-
-                    ExitArg = ExitAction.Recorded;
-                    DialogResult = false;
-
-                    #endregion
+                    //If not Already Stoped nor Pre Starting and FrameCount > 0, Stops
+                    Close();
                 }
                 else if ((Stage == Stage.PreStarting || Stage == Stage.Snapping) && !Project.Any)
                 {
@@ -589,7 +563,7 @@ namespace ScreenToGif.Windows
                     VideoDevicesComboBox.IsEnabled = true;
                     Topmost = true;
 
-                    Title = "Screen To Gif";
+                    Title = "ScreenToGif";
 
                     #endregion
                 }

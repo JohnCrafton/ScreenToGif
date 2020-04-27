@@ -1,7 +1,12 @@
-﻿using System.ComponentModel;
+﻿using System;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Media.Animation;
+using ScreenToGif.Util;
+using Button = System.Windows.Controls.Button;
+using Control = System.Windows.Controls.Control;
 
 namespace ScreenToGif.Controls
 {
@@ -9,19 +14,15 @@ namespace ScreenToGif.Controls
     {
         #region Variables
 
-        public enum StatusType
-        {
-            Info,
-            Warning,
-            Error
-        }
-
         private Grid _warningGrid;
         private Button _supressButton;
 
         #endregion
 
-        #region Dependency Properties
+        #region Dependency Properties/Events
+
+        public static readonly DependencyProperty IdProperty = DependencyProperty.Register("Id", typeof(int), typeof(StatusBand),
+            new FrameworkPropertyMetadata(0));
 
         public static readonly DependencyProperty TypeProperty = DependencyProperty.Register("Type", typeof(StatusType), typeof(StatusBand),
             new FrameworkPropertyMetadata(StatusType.Warning, OnTypePropertyChanged));
@@ -32,32 +33,51 @@ namespace ScreenToGif.Controls
         public static readonly DependencyProperty ImageProperty = DependencyProperty.Register("Image", typeof(UIElement), typeof(StatusBand),
             new FrameworkPropertyMetadata(null, OnImagePropertyChanged));
 
+        public static readonly DependencyProperty IsLinkProperty = DependencyProperty.Register("IsLink", typeof(bool), typeof(StatusBand),
+            new FrameworkPropertyMetadata(false));
+
         public static readonly DependencyProperty StartingProperty = DependencyProperty.Register("Starting", typeof(bool), typeof(StatusBand), 
             new PropertyMetadata(default(bool)));
+
+        public static readonly RoutedEvent DismissedEvent = EventManager.RegisterRoutedEvent("Dismissed", RoutingStrategy.Bubble, typeof(RoutedEventHandler), typeof(StatusBand));
 
         #endregion
 
         #region Properties
 
         [Bindable(true), Category("Common")]
+        public int Id
+        {
+            get => (int)GetValue(IdProperty);
+            set => SetValue(IdProperty, value);
+        }
+
+        [Bindable(true), Category("Common")]
         public StatusType Type
         {
-            get { return (StatusType)GetValue(TypeProperty); }
-            set { SetValue(TypeProperty, value); }
+            get => (StatusType)GetValue(TypeProperty);
+            set => SetValue(TypeProperty, value);
         }
 
         [Bindable(true), Category("Common")]
         public string Text
         {
-            get { return (string)GetValue(TextProperty); }
-            set { SetValue(TextProperty, value); }
+            get => (string)GetValue(TextProperty);
+            set => SetValue(TextProperty, value);
         }
 
         [Bindable(true), Category("Common")]
         public UIElement Image
         {
-            get { return (UIElement)GetValue(ImageProperty); }
-            set { SetValue(ImageProperty, value); }
+            get => (UIElement)GetValue(ImageProperty);
+            set => SetValue(ImageProperty, value);
+        }
+
+        [Bindable(true), Category("Common")]
+        public bool IsLink
+        {
+            get => (bool)GetValue(IsLinkProperty);
+            set => SetValue(IsLinkProperty, value);
         }
 
         /// <summary>
@@ -66,9 +86,20 @@ namespace ScreenToGif.Controls
         [Bindable(true), Category("Common")]
         public bool Starting
         {
-            get { return (bool)GetValue(StartingProperty); }
-            set { SetValue(StartingProperty, value); }
+            get => (bool)GetValue(StartingProperty);
+            set => SetValue(StartingProperty, value);
         }
+
+        /// <summary>
+        /// Event raised when the StatusBand gets dismissed/supressed.
+        /// </summary>
+        public event RoutedEventHandler Dismissed
+        {
+            add => AddHandler(DismissedEvent, value);
+            remove => RemoveHandler(DismissedEvent, value);
+        }
+
+        public Action Action { get; set; }
 
         #endregion
 
@@ -115,20 +146,24 @@ namespace ScreenToGif.Controls
         public override void OnApplyTemplate()
         {
             _warningGrid = GetTemplateChild("WarningGrid") as Grid;
+            var link = GetTemplateChild("MainHyperlink") as Hyperlink;
             _supressButton = GetTemplateChild("SuppressButton") as ImageButton;
 
             if (_supressButton != null)
-            {
                 _supressButton.Click += SupressButton_Click;
-            }
+
+            if (Action != null && link != null)
+                link.Click += (sender, args) => Action.Invoke();
 
             base.OnApplyTemplate();
         }
 
         #region Methods
 
-        public void Show(StatusType type, string text, UIElement image = null)
+        public void Show(StatusType type, string text, UIElement image = null, Action action = null)
         {
+            Action = action;
+
             //Collapsed-by-default elements do not apply templates.
             //http://stackoverflow.com/a/2115873/1735672
             //So it's necessary to do this here.
@@ -138,26 +173,30 @@ namespace ScreenToGif.Controls
             Type = type;
             Text = text;
             Image = image;
+            IsLink = action != null;
 
-            var show = _warningGrid?.FindResource("ShowWarningStoryboard") as Storyboard;
-
-            if (show != null)
+            if (_warningGrid?.FindResource("ShowWarningStoryboard") is Storyboard show)
                 BeginStoryboard(show);
         }
 
-        public void Info(string text, UIElement image = null)
+        public void Update(string text, UIElement image = null, Action action = null)
         {
-            Show(StatusType.Info, text, image ?? (Canvas)FindResource("Vector.Info"));
+            Show(StatusType.Update, text, image ?? (Canvas)FindResource("Vector.Synchronize"), action);
         }
 
-        public void Warning(string text, UIElement image = null)
+        public void Info(string text, UIElement image = null, Action action = null)
         {
-            Show(StatusType.Warning, text, image ?? (Canvas)FindResource("Vector.Warning"));
+            Show(StatusType.Info, text, image ?? (Canvas)FindResource("Vector.Info"), action);
         }
 
-        public void Error(string text, UIElement image = null)
+        public void Warning(string text, UIElement image = null, Action action = null)
         {
-            Show(StatusType.Error, text, image ?? (Canvas)FindResource("Vector.Error"));
+            Show(StatusType.Warning, text, image ?? (Canvas)FindResource("Vector.Warning"), action);
+        }
+
+        public void Error(string text, UIElement image = null, Action action = null)
+        {
+            Show(StatusType.Error, text, image ?? (Canvas)FindResource("Vector.Error"), action);
         }
 
         public void Hide()
@@ -167,10 +206,24 @@ namespace ScreenToGif.Controls
             if (_warningGrid?.Visibility == Visibility.Collapsed)
                 return;
 
-            var show = _warningGrid?.FindResource("HideWarningStoryboard") as Storyboard;
+            if (_warningGrid?.FindResource("HideWarningStoryboard") is Storyboard hide)
+                BeginStoryboard(hide);
 
-            if (show != null)
-                BeginStoryboard(show);
+            RaiseDismissedEvent();
+        }
+
+        public void RaiseDismissedEvent()
+        {
+            if (DismissedEvent == null || !IsLoaded)
+                return;
+
+            var newEventArgs = new RoutedEventArgs(DismissedEvent);
+            RaiseEvent(newEventArgs);
+        }
+
+        public static string KindToString(StatusType kind)
+        {
+            return "Vector." + (kind == StatusType.None ? "Tag" : kind == StatusType.Info ? "Info" : kind == StatusType.Update ? "Synchronize" : kind == StatusType.Warning ? "Warning" : "Error");
         }
 
         #endregion

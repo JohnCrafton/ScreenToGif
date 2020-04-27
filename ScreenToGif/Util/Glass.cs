@@ -3,7 +3,6 @@ using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using Microsoft.Win32;
-using ScreenToGif.FileWriters;
 
 namespace ScreenToGif.Util
 {
@@ -82,7 +81,7 @@ namespace ScreenToGif.Util
 
                     return Color.FromArgb(255, (byte)r, (byte)g, (byte)b);
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
                     return Color.FromArgb(255, 0, 0, 0);
                 }
@@ -96,7 +95,7 @@ namespace ScreenToGif.Util
 
             try
             {
-                IntPtr hwnd = new WindowInteropHelper(window).Handle;
+                var hwnd = new WindowInteropHelper(window).Handle;
 
                 if (hwnd == IntPtr.Zero)
                     throw new InvalidOperationException("The Window must be shown before extending glass.");
@@ -105,13 +104,15 @@ namespace ScreenToGif.Util
 
                 window.Background = Brushes.Transparent;
                 var hwndSource = HwndSource.FromHwnd(hwnd);
-                if (hwndSource != null)
+
+                if (hwndSource?.CompositionTarget != null)
                     hwndSource.CompositionTarget.BackgroundColor = Colors.Transparent;
 
                 #endregion
 
-                Native.Margins margins = new Native.Margins(margin);
+                var margins = new Native.Margins(margin);
                 Native.DwmExtendFrameIntoClientArea(hwnd, ref margins);
+                //TODO: Check if margins are dpi sensitive.
 
                 return true;
             }
@@ -130,21 +131,24 @@ namespace ScreenToGif.Util
 
             try
             {
-                IntPtr hwnd = new WindowInteropHelper(window).Handle;
+                var hwnd = new WindowInteropHelper(window).Handle;
 
                 if (hwnd == IntPtr.Zero)
                     throw new InvalidOperationException("The Window must be shown before retracting the glass.");
 
                 #region Set the background to transparent from both the WPF and Win32 perspectives
 
-                window.Background = new SolidColorBrush(Color.FromArgb(255, 241, 241, 241));
+                var brush = window.TryFindResource("Panel.Background.Level3") as SolidColorBrush ?? new SolidColorBrush(Color.FromArgb(255, 241, 241, 241));
+
+                window.Background = brush;
                 var hwndSource = HwndSource.FromHwnd(hwnd);
-                if (hwndSource != null)
-                    hwndSource.CompositionTarget.BackgroundColor = Color.FromArgb(255, 241, 241, 241);
+
+                if (hwndSource?.CompositionTarget != null)
+                    hwndSource.CompositionTarget.BackgroundColor = brush.Color;
 
                 #endregion
 
-                Native.Margins margins = new Native.Margins(new Thickness(0, 0, 0, 0));
+                var margins = new Native.Margins(new Thickness(0, 0, 0, 0));
                 Native.DwmExtendFrameIntoClientArea(hwnd, ref margins);
 
                 return true;

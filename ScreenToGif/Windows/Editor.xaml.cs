@@ -1,14 +1,16 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
-using System.Reflection.Emit;
 using System.Runtime.Serialization.Json;
 using System.Text;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -19,14 +21,14 @@ using System.Windows.Media.Imaging;
 using System.Windows.Shell;
 using System.Windows.Threading;
 using Microsoft.Win32;
+using ScreenToGif.Cloud.Imgur;
+using ScreenToGif.Cloud.YandexDisk;
 using ScreenToGif.Controls;
-using ScreenToGif.FileWriters;
 using ScreenToGif.ImageUtil;
+using ScreenToGif.ImageUtil.Gif.Decoder;
+using ScreenToGif.Model;
 using ScreenToGif.Util;
 using ScreenToGif.Windows.Other;
-using ScreenToGif.ImageUtil.Decoder;
-using ScreenToGif.Util.Model;
-using ScreenToGif.Util.Parameters;
 using ButtonBase = System.Windows.Controls.Primitives.ButtonBase;
 using Color = System.Windows.Media.Color;
 using Cursors = System.Windows.Input.Cursors;
@@ -36,32 +38,37 @@ using DragEventArgs = System.Windows.DragEventArgs;
 using Encoder = ScreenToGif.Windows.Other.Encoder;
 using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using ListViewItem = System.Windows.Controls.ListViewItem;
-using MouseEventArgs = System.Windows.Input.MouseEventArgs;
 using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
 using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
 using Size = System.Windows.Size;
+using System.Text.RegularExpressions;
+using System.Windows.Media.Effects;
+using ScreenToGif.ImageUtil.Apng;
 
 namespace ScreenToGif.Windows
 {
-    public partial class Editor : Window
+    public partial class Editor : Window, INotification
     {
         #region Properties
 
-        public static readonly DependencyProperty FilledListProperty = DependencyProperty.Register("FilledList", typeof(bool), typeof(Editor), new FrameworkPropertyMetadata(false));
-        public static readonly DependencyProperty NotPreviewingProperty = DependencyProperty.Register("NotPreviewing", typeof(bool), typeof(Editor), new FrameworkPropertyMetadata(true));
-        public static readonly DependencyProperty IsLoadingProperty = DependencyProperty.Register("IsLoading", typeof(bool), typeof(Editor), new FrameworkPropertyMetadata(false));
-        public static readonly DependencyProperty TotalDurationProperty = DependencyProperty.Register("TotalDuration", typeof(TimeSpan), typeof(Editor));
-        public static readonly DependencyProperty FrameSizeProperty = DependencyProperty.Register("FrameSize", typeof(System.Windows.Size), typeof(Editor));
-        public static readonly DependencyProperty FrameScaleProperty = DependencyProperty.Register("FrameScale", typeof(int), typeof(Editor));
-        public static readonly DependencyProperty AverageDelayProperty = DependencyProperty.Register("AverageDelay", typeof(double), typeof(Editor));
+        public static readonly DependencyProperty FilledListProperty = DependencyProperty.Register(nameof(FilledList), typeof(bool), typeof(Editor), new FrameworkPropertyMetadata(false));
+        public static readonly DependencyProperty NotPreviewingProperty = DependencyProperty.Register(nameof(NotPreviewing), typeof(bool), typeof(Editor), new FrameworkPropertyMetadata(true));
+        public static readonly DependencyProperty IsLoadingProperty = DependencyProperty.Register(nameof(IsLoading), typeof(bool), typeof(Editor), new FrameworkPropertyMetadata(false));
+        public static readonly DependencyProperty TotalDurationProperty = DependencyProperty.Register(nameof(TotalDuration), typeof(TimeSpan), typeof(Editor));
+        public static readonly DependencyProperty CurrentTimeProperty = DependencyProperty.Register(nameof(CurrentTime), typeof(TimeSpan), typeof(Editor));
+        public static readonly DependencyProperty FrameSizeProperty = DependencyProperty.Register(nameof(FrameSize), typeof(System.Windows.Size), typeof(Editor));
+        public static readonly DependencyProperty FrameScaleProperty = DependencyProperty.Register(nameof(FrameScale), typeof(int), typeof(Editor));
+        public static readonly DependencyProperty AverageDelayProperty = DependencyProperty.Register(nameof(AverageDelay), typeof(double), typeof(Editor));
+        public static readonly DependencyProperty FrameDpiProperty = DependencyProperty.Register(nameof(FrameDpi), typeof(double), typeof(Editor));
+        public static readonly DependencyProperty IsCancelableProperty = DependencyProperty.Register(nameof(IsCancelable), typeof(bool), typeof(Editor), new FrameworkPropertyMetadata(false));
 
         /// <summary>
         /// True if there is a value inside the list of frames.
         /// </summary>
         public bool FilledList
         {
-            get { return (bool)GetValue(FilledListProperty); }
-            set { SetValue(FilledListProperty, value); }
+            get => (bool)GetValue(FilledListProperty);
+            set => SetValue(FilledListProperty, value);
         }
 
         /// <summary>
@@ -69,8 +76,8 @@ namespace ScreenToGif.Windows
         /// </summary>
         public bool NotPreviewing
         {
-            get { return (bool)GetValue(NotPreviewingProperty); }
-            set { SetValue(NotPreviewingProperty, value); }
+            get => (bool)GetValue(NotPreviewingProperty);
+            set => SetValue(NotPreviewingProperty, value);
         }
 
         /// <summary>
@@ -78,8 +85,8 @@ namespace ScreenToGif.Windows
         /// </summary>
         public bool IsLoading
         {
-            get { return (bool)GetValue(IsLoadingProperty); }
-            set { SetValue(IsLoadingProperty, value); }
+            get => (bool)GetValue(IsLoadingProperty);
+            set => SetValue(IsLoadingProperty, value);
         }
 
         /// <summary>
@@ -87,8 +94,17 @@ namespace ScreenToGif.Windows
         /// </summary>
         private TimeSpan TotalDuration
         {
-            get { return (TimeSpan)GetValue(TotalDurationProperty); }
-            set { SetValue(TotalDurationProperty, value); }
+            get => (TimeSpan)GetValue(TotalDurationProperty);
+            set => SetValue(TotalDurationProperty, value);
+        }
+
+        /// <summary>
+        /// The cumulative duration of the animation. Used by the statistics tab.
+        /// </summary>
+        private TimeSpan CurrentTime
+        {
+            get => (TimeSpan)GetValue(CurrentTimeProperty);
+            set => SetValue(CurrentTimeProperty, value);
         }
 
         /// <summary>
@@ -96,8 +112,8 @@ namespace ScreenToGif.Windows
         /// </summary>
         private Size FrameSize
         {
-            get { return (System.Windows.Size)GetValue(FrameSizeProperty); }
-            set { SetValue(FrameSizeProperty, value); }
+            get => (System.Windows.Size)GetValue(FrameSizeProperty);
+            set => SetValue(FrameSizeProperty, value);
         }
 
         /// <summary>
@@ -105,8 +121,8 @@ namespace ScreenToGif.Windows
         /// </summary>
         private int FrameScale
         {
-            get { return (int)GetValue(FrameScaleProperty); }
-            set { SetValue(FrameScaleProperty, value); }
+            get => (int)GetValue(FrameScaleProperty);
+            set => SetValue(FrameScaleProperty, value);
         }
 
         /// <summary>
@@ -114,8 +130,26 @@ namespace ScreenToGif.Windows
         /// </summary>
         private double AverageDelay
         {
-            get { return (double)GetValue(AverageDelayProperty); }
-            set { SetValue(AverageDelayProperty, value); }
+            get => (double)GetValue(AverageDelayProperty);
+            set => SetValue(AverageDelayProperty, value);
+        }
+
+        /// <summary>
+        /// The DPI of the frames. Used by the statistics tab.
+        /// </summary>
+        private double FrameDpi
+        {
+            get => (double)GetValue(FrameDpiProperty);
+            set => SetValue(FrameDpiProperty, value);
+        }
+
+        /// <summary>
+        /// True if the current recording being loaded can be cancelled.
+        /// </summary>
+        public bool IsCancelable
+        {
+            get => (bool)GetValue(IsCancelableProperty);
+            set => SetValue(IsCancelableProperty, value);
         }
 
         #endregion
@@ -153,14 +187,50 @@ namespace ScreenToGif.Windows
         private bool Slept { get; set; }
 
         private readonly System.Windows.Forms.Timer _timerPreview = new System.Windows.Forms.Timer();
+        private readonly DispatcherTimer _searchTimer;
 
         private Action<object, RoutedEventArgs> _applyAction = null;
+
+        private bool _abortLoading;
 
         #endregion
 
         public Editor()
         {
             InitializeComponent();
+
+            #region Initialize timers
+
+            _searchTimer = new DispatcherTimer(DispatcherPriority.Background);
+            _searchTimer.Interval = TimeSpan.FromMilliseconds(500);
+            _searchTimer.Tick += SearchTimer_Tick;
+
+            #endregion
+
+            #region Adjust the position
+
+            //Tries to adjust the position/size of the window, centers on screen otherwise.
+            if (!UpdatePositioning())
+                WindowStartupLocation = WindowStartupLocation.CenterScreen;
+
+            #endregion
+
+            #region UWP restrictions
+
+#if UWP
+
+            CustomCommandsCheckBox.Visibility = Visibility.Collapsed;
+            CustomCommandsTextBox.Visibility = Visibility.Collapsed;
+            CustomCommandsApngCheckBox.Visibility = Visibility.Collapsed;
+            CustomCommandsApngTextBox.Visibility = Visibility.Collapsed;
+            CustomCommandsVideoCheckBox.Visibility = Visibility.Collapsed;
+            CustomCommandsVideoTextBox.Visibility = Visibility.Collapsed;
+            CustomCommandsPsdCheckBox.Visibility = Visibility.Collapsed;
+            CustomCommandsPsdTextBox.Visibility = Visibility.Collapsed;
+
+#endif
+
+            #endregion
         }
 
         #region Main Events
@@ -171,43 +241,29 @@ namespace ScreenToGif.Windows
             SystemEvents.DisplaySettingsChanged += System_DisplaySettingsChanged;
             SystemParameters.StaticPropertyChanged += SystemParameters_StaticPropertyChanged;
 
+            #region Adjust the position
+
+            //Tries to adjust the position/size of the window, centers on screen otherwise.
+            if (!UpdatePositioning())
+                WindowStartupLocation = WindowStartupLocation.CenterScreen;
+
+            #endregion
+
             ScrollSynchronizer.SetScrollGroup(ZoomBoxControl.GetScrollViewer(), "Canvas");
             ScrollSynchronizer.SetScrollGroup(MainScrollViewer, "Canvas");
+            ScrollSynchronizer.SetScrollGroup(BehindScrollViewer, "Canvas");
 
-            #region Window Positioning
-
-            if (Math.Abs(UserSettings.All.EditorLeft - -1) < 0.5)
-                UserSettings.All.EditorLeft = (SystemParameters.WorkArea.Width - SystemParameters.WorkArea.Left - Width) / 2;
-            if (Math.Abs(UserSettings.All.EditorTop - -1) < 0.5)
-                UserSettings.All.EditorTop = (SystemParameters.WorkArea.Height - SystemParameters.WorkArea.Top - Height) / 2;
-
-            if (UserSettings.All.EditorLeft > SystemParameters.WorkArea.Width)
-                UserSettings.All.EditorLeft = SystemParameters.WorkArea.Width - 100;
-            if (UserSettings.All.EditorTop > SystemParameters.WorkArea.Height)
-                UserSettings.All.EditorTop = SystemParameters.WorkArea.Height - 100;
-
-            #endregion
-
-            #region Thumb Buttons
-
-            //var p = @"C:\Users\Nicke Manarin\AppData\Local\Temp\ScreenToGif\Recording\";
-
-            //SaveDrawingToFile(NewRecordingThumbInfo.ImageSource as DrawingImage, p + "‪1.png", 1);
-            //SaveDrawingToFile(NewWebcamRecordingThumbInfo.ImageSource as DrawingImage, p + "‪2.png", 1);
-            //SaveDrawingToFile(NewBoardRecordingThumbInfo.ImageSource as DrawingImage, p + "‪3.png", 1);
-            //SaveDrawingToFile(NewFromMediaProjectThumbInfo.ImageSource as DrawingImage, p + "4.png", 1);
-            //SaveDrawingToFile(DiscardThumbInfo.ImageSource as DrawingImage, p + "5.png", 1);
-
-            #endregion
+            DisplayUpdatePromoter();
 
             #region Load
 
             if (Project != null)
             {
-                ShowProgress(FindResource("Editor.Preparing").ToString(), Project.Frames.Count, true);
+                ShowProgress(LocalizationHelper.Get("Editor.Preparing"), Project.Frames.Count, true);
 
                 Cursor = Cursors.AppStarting;
                 IsLoading = true;
+                IsCancelable = true;
 
                 ActionStack.Project = Project;
 
@@ -226,7 +282,7 @@ namespace ScreenToGif.Windows
 
                 var extensionList = Argument.FileNames.Select(Path.GetExtension).ToList();
 
-                var media = new[] { "jpg", "gif", "bmp", "png", "avi", "mp4", "wmv" };
+                var media = new[] { "jpg", "jpeg", "gif", "bmp", "png", "apng", "avi", "mkv", "mp4", "webm", "wmv" };
 
                 var projectCount = extensionList.Count(x => !string.IsNullOrEmpty(x) && (x.Equals("stg") || x.Equals("zip")));
                 var mediaCount = extensionList.Count(x => !string.IsNullOrEmpty(x) && media.Contains(x));
@@ -235,13 +291,13 @@ namespace ScreenToGif.Windows
 
                 if (projectCount != 0 && mediaCount != 0)
                 {
-                    Dispatcher.Invoke(() => EditorStatusBand.Warning(FindResource("Editor.InvalidLoadingFiles").ToString()));
+                    Dispatcher.Invoke(() => StatusList.Warning(FindResource("Editor.InvalidLoadingFiles").ToString()));
                     return;
                 }
 
                 if (projectCount > 0)
                 {
-                    Dispatcher.Invoke(() => EditorStatusBand.Warning(FindResource("Editor.InvalidLoadingProjects").ToString()));
+                    Dispatcher.Invoke(() => StatusList.Warning(FindResource("Editor.InvalidLoadingProjects").ToString()));
                     return;
                 }
 
@@ -255,14 +311,15 @@ namespace ScreenToGif.Windows
             #endregion
 
             RibbonTabControl.SelectedIndex = 0;
-            WelcomeTextBlock.Text = Humanizer.Welcome();
+
+            WelcomeTextBlock.Text = StringResource(Humanizer.WelcomeInfo());
+            SymbolTextBlock.Text = Humanizer.Welcome();
         }
 
         private void Window_Activated(object sender, EventArgs e)
         {
-            //TODO: Check with High dpi.
             if (UserSettings.All.EditorExtendChrome)
-                Glass.ExtendGlassFrame(this, new Thickness(0, 100, 0, 0)); //26
+                Glass.ExtendGlassFrame(this, new Thickness(0, 126, 0, 0));
             else
                 Glass.RetractGlassFrame(this);
 
@@ -294,12 +351,48 @@ namespace ScreenToGif.Windows
                 e.Handled = true;
         }
 
+        private void Window_DpiChanged(object sender, DpiChangedEventArgs e)
+        {
+            if (e.NewDpi.PixelsPerInchX == e.OldDpi.PixelsPerInchX)
+                return;
+
+            ZoomBoxControl.RefreshImage();
+
+            Cancel_Executed(sender, null);
+        }
+
         private void Window_Closing(object sender, CancelEventArgs e)
         {
-            //What if there's any processing happening?
+            //TODO: What if there's any processing happening? I need to try to stop.
 
             Pause();
 
+            if (Project != null && Project.Any)
+            {
+                Project.Persist();
+
+                if (UserSettings.All.NotifyWhileClosingEditor && !Dialog.Ask(LocalizationHelper.Get("Editor.Exiting.Title"), LocalizationHelper.Get("Editor.Exiting.Instruction"),
+                        LocalizationHelper.Get(UserSettings.All.AutomaticCleanUp ? "Editor.Exiting.Message2" : "Editor.Exiting.Message")))
+                {
+                    e.Cancel = true;
+                    return;
+                }
+
+                Project.Clear();
+
+                //Remove the ActionStack.
+                ActionStack.Clear();
+            }
+
+            //Stop all timers.
+            _searchTimer?.Stop();
+
+            //Manually get the position/size of the window, so it's possible opening multiple instances.
+            UserSettings.All.EditorTop = Top;
+            UserSettings.All.EditorLeft = Left;
+            UserSettings.All.EditorWidth = Width;
+            UserSettings.All.EditorHeight = Height;
+            UserSettings.All.EditorWindowState = WindowState;
             UserSettings.Save();
 
             Encoder.TryClose();
@@ -369,6 +462,38 @@ namespace ScreenToGif.Windows
             }
         }
 
+        private async void SearchTimer_Tick(object sender, EventArgs e)
+        {
+            if (!IsLoaded)
+                return;
+
+            _searchTimer.Stop();
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    //Check if there's a file with the same path.
+                    var exists = File.Exists(Path.Combine(GetOutputFolder(), GetOutputFilename() + GetOutputExtension()));
+
+                    Dispatcher.Invoke(() =>
+                    {
+                        FileExistsGrid.Visibility = exists ? Visibility.Visible : Visibility.Collapsed;
+                        StatusList.Remove(StatusType.Warning);
+                    });
+                }
+                catch (Exception ex)
+                {
+                    LogWriter.Log(ex, "Check if exists");
+
+                    Dispatcher.Invoke(() =>
+                    {
+                        StatusList.Warning("Filename inconsistency: " + ex.Message);
+                        FileExistsGrid.Visibility = Visibility.Collapsed;
+                    });
+                }
+            });
+        }
 
         private void System_PowerModeChanged(object sender, PowerModeChangedEventArgs e)
         {
@@ -385,7 +510,7 @@ namespace ScreenToGif.Windows
 
         private void System_DisplaySettingsChanged(object sender, EventArgs e)
         {
-            //TODO: If a monitor is removed, or resolution changes, update the position of the window.
+            UpdatePositioning(false);
         }
 
         private void SystemParameters_StaticPropertyChanged(object sender, PropertyChangedEventArgs e)
@@ -408,6 +533,7 @@ namespace ScreenToGif.Windows
 
             if (FrameListView.SelectedIndex == -1)
             {
+                UpdateOtherStatistics();
                 ZoomBoxControl.ImageSource = null;
                 return;
             }
@@ -429,8 +555,7 @@ namespace ScreenToGif.Windows
                 var focused = Keyboard.FocusedElement as FrameListBoxItem;
 
                 //current = FrameListView.Items.GetItemAt(LastSelected) as FrameListBoxItem;
-                if (focused != null && focused.IsVisible &&
-                    (Keyboard.IsKeyDown(Key.LeftShift) || Keyboard.IsKeyDown(Key.RightShift) || Keyboard.IsKeyDown(Key.LeftCtrl) || Keyboard.IsKeyDown(Key.RightCtrl)))
+                if (focused != null && focused.IsVisible && (Keyboard.IsKeyDown(Key.LeftShift) || Keyboard.IsKeyDown(Key.RightShift) || Keyboard.IsKeyDown(Key.LeftCtrl) || Keyboard.IsKeyDown(Key.RightCtrl)))
                     current = focused;
                 else
                     current = FrameListView.Items.OfType<FrameListBoxItem>().FirstOrDefault(x => x.IsFocused || x.IsSelected);
@@ -444,7 +569,8 @@ namespace ScreenToGif.Windows
                 else
                     FrameListView.SelectedIndex = LastSelected = FrameListView.Items.Count - 1;
 
-                current = FrameListView.Items[FrameListView.SelectedIndex] as FrameListBoxItem;
+                if (FrameListView.SelectedIndex > -1)
+                    current = FrameListView.Items[FrameListView.SelectedIndex] as FrameListBoxItem;
             }
 
             if (current != null)
@@ -454,18 +580,22 @@ namespace ScreenToGif.Windows
 
                 var currentIndex = FrameListView.Items.IndexOf(current);
 
-                ZoomBoxControl.ImageSource = Project.Frames[currentIndex].Path;
-                FrameListView.ScrollIntoView(current);
+                if (currentIndex > -1)
+                {
+                    ZoomBoxControl.ImageSource = Project.Frames[currentIndex].Path;
+                    FrameListView.ScrollIntoView(current);
+                }
             }
+
+            if (!_timerPreview.Enabled)
+                UpdateOtherStatistics();
 
             WasChangingSelection = false;
         }
 
         private void Item_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            var item = sender as FrameListBoxItem;
-
-            if (item != null)// && !WasChangingSelection)
+            if (sender is FrameListBoxItem item)// && !WasChangingSelection)
             {
                 LastSelected = item.FrameNumber;
                 Keyboard.Focus(item);
@@ -481,6 +611,11 @@ namespace ScreenToGif.Windows
 
         private void NewRecording_CanExecute(object sender, CanExecuteRoutedEventArgs e)
         {
+            e.CanExecute = !IsLoading && !e.Handled && Application.Current.Windows.OfType<Window>().All(a => !(a is RecorderWindow));
+        }
+
+        private void NewProject_CanExecute(object sender, CanExecuteRoutedEventArgs e)
+        {
             e.CanExecute = !IsLoading && !e.Handled;
         }
 
@@ -491,49 +626,27 @@ namespace ScreenToGif.Windows
             WindowState = WindowState.Minimized;
             ShowInTaskbar = false;
             Encoder.Minimize();
+            ClosePanel(removeEvent: true);
 
-            var recorder = new Recorder();
-            var result = recorder.ShowDialog();
-
-            if (result.HasValue && !result.Value && recorder.ExitArg == ExitAction.Recorded && recorder.Project.Frames != null)
-            {
-                LoadProject(recorder.Project);
-                ShowHint("Hint.NewRecording");
-            }
-
-            Encoder.Restore();
-            ShowInTaskbar = true;
-            WindowState = WindowState.Normal;
+            App.MainViewModel.OpenRecorder.Execute(this);
         }
 
         private void NewWebcamRecording_Executed(object sender, ExecutedRoutedEventArgs e)
         {
             e.Handled = true;
             Pause();
+            ClosePanel(removeEvent: true);
 
-            var webcam = new Webcam();
-            var result = webcam.ShowDialog();
-
-            if (result.HasValue && !result.Value && webcam.ExitArg == ExitAction.Recorded && webcam.Project.Frames != null)
-            {
-                LoadProject(webcam.Project);
-                ShowHint("Hint.NewWebcamRecording");
-            }
+            App.MainViewModel.OpenWebcamRecorder.Execute(this);
         }
 
         private void NewBoardRecording_Executed(object sender, ExecutedRoutedEventArgs e)
         {
             e.Handled = true;
             Pause();
+            ClosePanel(removeEvent: true);
 
-            var board = new Board();
-            var result = board.ShowDialog();
-
-            if (result.HasValue && !result.Value && board.ExitArg == ExitAction.Recorded && board.Project.Frames != null)
-            {
-                LoadProject(board.Project);
-                ShowHint("Hint.NewBoardRecording");
-            }
+            App.MainViewModel.OpenBoardRecorder.Execute(this);
         }
 
         private void NewProject_Executed(object sender, ExecutedRoutedEventArgs e)
@@ -542,27 +655,12 @@ namespace ScreenToGif.Windows
             ShowPanel(PanelType.NewAnimation, StringResource("Editor.File.Blank"), "Vector.File.New", ApplyNewProjectButton_Click);
         }
 
-        private void NewProjectBackgroundColor_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            var colorPicker = new ColorSelector(UserSettings.All.NewAnimationColor) { Owner = this };
-            var result = colorPicker.ShowDialog();
-
-            if (result.HasValue && result.Value)
-            {
-                UserSettings.All.NewAnimationColor = colorPicker.SelectedColor;
-            }
-        }
-
         private void ApplyNewProjectButton_Click(object sender, RoutedEventArgs e)
         {
             Pause();
 
-            //Temporary folder.
-            if (string.IsNullOrWhiteSpace(UserSettings.All.TemporaryFolder))
-                UserSettings.All.TemporaryFolder = Path.GetTempPath();
-
             //Start new project.
-            var project = new ProjectInfo().CreateProjectFolder();
+            var project = new ProjectInfo().CreateProjectFolder(ProjectByType.Editor);
 
             var fileName = Path.Combine(project.FullPath, "0.png");
 
@@ -570,11 +668,12 @@ namespace ScreenToGif.Windows
 
             using (var stream = new FileStream(fileName, FileMode.Create))
             {
-                //var scale = this.Scale();
-
                 var bitmapSource = ImageMethods.CreateEmtpyBitmapSource(UserSettings.All.NewAnimationColor, UserSettings.All.NewAnimationWidth, UserSettings.All.NewAnimationHeight, this.Dpi(), PixelFormats.Indexed1);
-                var bitmapFrame = BitmapFrame.Create(bitmapSource);
 
+                if (bitmapSource.Format != PixelFormats.Bgra32)
+                    bitmapSource = new FormatConvertedBitmap(bitmapSource, PixelFormats.Bgra32, null, 0);
+
+                var bitmapFrame = BitmapFrame.Create(bitmapSource);
                 var encoder = new PngBitmapEncoder();
                 encoder.Frames.Add(bitmapFrame);
                 encoder.Save(stream);
@@ -591,52 +690,20 @@ namespace ScreenToGif.Windows
             project.Frames = new List<FrameInfo> { new FrameInfo(fileName, 66) };
 
             LoadProject(project);
-            ShowHint("Hint.NewAnimation");
+            ShowHint("S.Hint.NewAnimation");
         }
 
-        private void NewFromMediaProject_Executed(object sender, ExecutedRoutedEventArgs e)
+        public void RecorderCallback(ProjectInfo project)
         {
-            e.Handled = true;
-            Pause();
-
-            var ofd = new OpenFileDialog
+            if (project?.Any == true)
             {
-                Multiselect = true,
-                AddExtension = true,
-                CheckFileExists = true,
-                Title = FindResource("Editor.OpenMediaProject").ToString(),
-                Filter = "All supported files (*.bmp, *.jpg, *.png, *.gif, *.mp4, *.wmv, *.avi, *.stg, *.zip)|*.bmp;*.jpg;*.png;*.gif;*.mp4;*.wmv;*.avi;*.stg;*.zip|" +
-                         "Image (*.bmp, *.jpg, *.png, *.gif)|*.bmp;*.jpg;*.png;*.gif|" +
-                         "Video (*.mp4, *.wmv, *.avi)|*.mp4;*.wmv;*.avi|" +
-                         "ScreenToGif Project (*.stg, *.zip) |*.stg;*.zip",
-            };
-
-            var result = ofd.ShowDialog();
-
-            #region Validation
-
-            var extensionList = ofd.FileNames.Select(Path.GetExtension).ToList();
-
-            var media = new[] { "jpg", "gif", "bmp", "png", "avi", "mp4", "wmv" };
-
-            var projectCount = extensionList.Count(x => !string.IsNullOrEmpty(x) && (x.Equals("stg") || x.Equals("zip")));
-            var mediaCount = extensionList.Count(x => !string.IsNullOrEmpty(x) && media.Contains(x));
-
-            if (projectCount != 0 && mediaCount != 0)
-            {
-                Dispatcher.Invoke(() => EditorStatusBand.Warning(FindResource("Editor.InvalidLoadingFiles").ToString()));
-                return;
+                LoadProject(project);
+                ShowHint("S.Hint.NewRecording");
             }
 
-            #endregion
-
-            if (result.HasValue && result.Value)
-            {
-                //DiscardProject_Executed(null, null);
-
-                _importFramesDel = ImportFrom;
-                _importFramesDel.BeginInvoke(ofd.FileNames.ToList(), ImportFromCallback, null);
-            }
+            Encoder.Restore();
+            ShowInTaskbar = true;
+            WindowState = WindowState == WindowState.Minimized ? WindowState.Normal : WindowState;
         }
 
         #endregion
@@ -644,6 +711,11 @@ namespace ScreenToGif.Windows
         #region Insert
 
         private void Insert_CanExecute(object sender, CanExecuteRoutedEventArgs e)
+        {
+            e.CanExecute = Project != null && Project.Frames.Count > 0 && FrameListView.SelectedIndex != -1 && !IsLoading && !e.Handled && Application.Current.Windows.OfType<Window>().All(a => !(a is RecorderWindow));
+        }
+
+        private void InsertFromMedia_CanExecute(object sender, CanExecuteRoutedEventArgs e)
         {
             e.CanExecute = Project != null && Project.Frames.Count > 0 && FrameListView.SelectedIndex != -1 && !IsLoading && !e.Handled;
         }
@@ -655,26 +727,43 @@ namespace ScreenToGif.Windows
             WindowState = WindowState.Minimized;
             Encoder.Minimize();
 
-            var recorder = new Recorder();
-            var result = recorder.ShowDialog();
+            ProjectInfo project = null;
 
-            #region If recording cancelled
-
-            if (!result.HasValue || recorder.ExitArg != ExitAction.Recorded || recorder.Project.Frames == null)
+            if (UserSettings.All.NewRecorder)
             {
-                GC.Collect();
+                var recorder = new RecorderNew();
+                recorder.ShowDialog();
+                project = recorder.Project;
 
-                Encoder.Restore();
-                WindowState = WindowState.Normal;
-                return;
+                if (recorder.Project?.Frames == null || !recorder.Project.Any)
+                {
+                    GC.Collect();
+
+                    Encoder.Restore();
+                    WindowState = WindowState.Normal;
+                    return;
+                }
             }
+            else
+            {
+                var recorder = new Recorder();
+                recorder.ShowDialog();
+                project = recorder.Project;
 
-            #endregion
+                if (recorder.Project?.Frames == null || !recorder.Project.Any)
+                {
+                    GC.Collect();
+
+                    Encoder.Restore();
+                    WindowState = WindowState.Normal;
+                    return;
+                }
+            }
 
             #region Insert
 
-            var insert = new Insert(Project.Frames.CopyList(), recorder.Project.Frames, FrameListView.SelectedIndex) { Owner = this };
-            result = insert.ShowDialog();
+            var insert = new Insert(Project.Frames.CopyList(), project.Frames, FrameListView.SelectedIndex) { Owner = this };
+            var result = insert.ShowDialog();
 
             if (result.HasValue && result.Value)
             {
@@ -694,11 +783,11 @@ namespace ScreenToGif.Windows
             Pause();
 
             var recorder = new Webcam();
-            var result = recorder.ShowDialog();
+            recorder.ShowDialog();
 
             #region If recording cancelled
 
-            if (!result.HasValue || recorder.ExitArg != ExitAction.Recorded || recorder.Project.Frames == null)
+            if (recorder.Project?.Frames == null || !recorder.Project.Any)
             {
                 GC.Collect();
 
@@ -709,10 +798,9 @@ namespace ScreenToGif.Windows
 
             #region Insert
 
-            var insert = new Insert(Project.Frames.CopyList(), recorder.Project.Frames, FrameListView.SelectedIndex);
-            insert.Owner = this;
+            var insert = new Insert(Project.Frames.CopyList(), recorder.Project.Frames, FrameListView.SelectedIndex) { Owner = this };
 
-            result = insert.ShowDialog();
+            var result = insert.ShowDialog();
 
             if (result.HasValue && result.Value)
             {
@@ -729,11 +817,11 @@ namespace ScreenToGif.Windows
             Pause();
 
             var recorder = new Board();
-            var result = recorder.ShowDialog();
+            recorder.ShowDialog();
 
             #region If recording cancelled
 
-            if (!result.HasValue || recorder.ExitArg != ExitAction.Recorded || recorder.Project.Frames == null)
+            if (recorder.Project?.Frames == null || !recorder.Project.Any)
             {
                 GC.Collect();
 
@@ -744,10 +832,9 @@ namespace ScreenToGif.Windows
 
             #region Insert
 
-            var insert = new Insert(Project.Frames.CopyList(), recorder.Project.Frames, FrameListView.SelectedIndex);
-            insert.Owner = this;
+            var insert = new Insert(Project.Frames.CopyList(), recorder.Project.Frames, FrameListView.SelectedIndex) { Owner = this };
 
-            result = insert.ShowDialog();
+            var result = insert.ShowDialog();
 
             if (result.HasValue && result.Value)
             {
@@ -768,10 +855,10 @@ namespace ScreenToGif.Windows
                 Multiselect = true,
                 AddExtension = true,
                 CheckFileExists = true,
-                Title = FindResource("Editor.OpenMedia").ToString(),
-                Filter = "All supported files (*.bmp, *.jpg, *.png, *.gif, *.mp4, *.wmv, *.avi)|*.bmp;*.jpg;*.png;*.gif;*.mp4;*.wmv;*.avi|" +
-                         "Image (*.bmp, *.jpg, *.png, *.gif)|*.bmp;*.jpg;*.png;*.gif|" +
-                         "Video (*.mp4, *.wmv, *.avi)|*.mp4;*.wmv;*.avi",
+                Title = LocalizationHelper.Get("Editor.OpenMedia"),
+                Filter = "All supported files (*.apng, *.avi, *.bmp, *.gif, *.jpg, *.jpeg, *.mkv, *.mp4, *.png, *.webm, *.wmv)|*.apng;*.avi;*.bmp;*.gif;*.jpg;*.jpeg;*.mkv;*.mp4;*.png;*.webm;*.wmv|" +
+                         "Image (*.apng, *.bmp, *.gif, *.jpg, *.jpeg, *.png)|*.apng;*.bmp;*.gif;*.jpg;*.jpeg;*.png|" +
+                         "Video (*.avi, *.mkv, *.mp4, *.webm, *.wmv)|*.avi;*.mkv;*.mp4;*.webm;*.wmv",
             };
 
             var result = ofd.ShowDialog();
@@ -780,14 +867,14 @@ namespace ScreenToGif.Windows
 
             var extensionList = ofd.FileNames.Select(Path.GetExtension).ToList();
 
-            var media = new[] { "jpg", "gif", "bmp", "png", "avi", "mp4", "wmv" };
+            var media = new[] { "apng", "avi", "bmp", "gif", "jpg", "jpeg", "mkv", "mp4", "png", "webm", "wmv" };
 
             var projectCount = extensionList.Count(x => !string.IsNullOrEmpty(x) && (x.Equals("stg") || x.Equals("zip")));
             var mediaCount = extensionList.Count(x => !string.IsNullOrEmpty(x) && media.Contains(x));
 
             if (projectCount != 0 && mediaCount != 0)
             {
-                Dispatcher.Invoke(() => EditorStatusBand.Warning(FindResource("Editor.InvalidLoadingFiles").ToString()));
+                Dispatcher.Invoke(() => StatusList.Warning(FindResource("Editor.InvalidLoadingFiles").ToString()));
                 return;
             }
 
@@ -829,36 +916,57 @@ namespace ScreenToGif.Windows
             switch (UserSettings.All.SaveType)
             {
                 case Export.Gif:
-                    FileTypeComboBox.ItemsSource = new List<string> { ".gif" };
+                {
                     UserSettings.All.LatestExtension = ".gif";
-                    break;
-                case Export.Video:
 
+                    if (FfmpegGifEncoderRadioButton.IsChecked == true)
+                    {
+                        UpdateFfmpegPresetsList();
+                        SelectDefaultFfmpegPreset();
+                    }
+                    break;
+                }
+                case Export.Apng:
+                {
+                    if (FfmpegApngEncoderRadioButton.IsChecked == true)
+                    {
+                        UpdateFfmpegPresetsList();
+                        SelectDefaultFfmpegPreset();
+                    }
+                    break;
+                }
+                case Export.Video:
+                {
                     if (SystemEncoderRadioButton.IsChecked == true)
                     {
-                        FileTypeComboBox.ItemsSource = new List<string> { ".avi" };
-                        UserSettings.All.LatestExtension = ".avi";
+                        UserSettings.All.LatestVideoExtension = ".avi";
+                        FileTypeVideoComboBox.IsEnabled = false;
                     }
                     else
                     {
-                        FileTypeComboBox.ItemsSource = new List<string> { ".avi", ".mp4", ".wmv", ".webm" };
+                        FileTypeVideoComboBox.IsEnabled = true;
 
-                        if (!FileTypeComboBox.ItemsSource.OfType<string>().Contains(UserSettings.All.LatestExtension))
-                            UserSettings.All.LatestExtension = ".mp4";
+                        if (FileTypeVideoComboBox.Items == null || !FileTypeVideoComboBox.Items.OfType<string>().Contains(UserSettings.All.LatestVideoExtension))
+                            UserSettings.All.LatestVideoExtension = ".mp4";
+
+                        UpdateFfmpegPresetsList();
+                        SelectDefaultFfmpegPreset();
                     }
 
                     break;
+                }
                 case Export.Images:
-
-                    FileTypeComboBox.ItemsSource = new List<string> { ".zip", ".png" };
-                    UserSettings.All.LatestExtension = UserSettings.All.ZipImages ? ".zip" : ".png";
+                    UserSettings.All.LatestImageExtension = UserSettings.All.ZipImages ? ".zip" : ".png";
                     break;
                 case Export.Project:
-
-                    FileTypeComboBox.ItemsSource = new List<string> { ".stg", ".zip" };
-
-                    if (UserSettings.All.LatestExtension != ".stg" && UserSettings.All.LatestExtension != ".zip")
-                        UserSettings.All.LatestExtension = ".stg";
+                {
+                    if (UserSettings.All.LatestProjectExtension != ".stg" && UserSettings.All.LatestProjectExtension != ".zip")
+                        UserSettings.All.LatestProjectExtension = ".stg";
+                 
+                    break;
+                }
+                case Export.Photoshop:
+                    UserSettings.All.LatestPhotoshopExtension = ".psd";
                     break;
             }
 
@@ -870,29 +978,7 @@ namespace ScreenToGif.Windows
             if (!IsLoaded)
                 return;
 
-            if (FfmpegEncoderRadioButton.IsChecked == true)
-            {
-                if (Util.Other.IsFfmpegPresent())
-                {
-                    SaveType_Checked(sender, e);
-                    EncoderStatusBand.Hide();
-                    return;
-                }
-
-                EncoderStatusBand.Warning(StringResource("Editor.Warning.Ffmpeg"));
-                SystemEncoderRadioButton.IsChecked = true;
-                return;
-            }
-
             SaveType_Checked(sender, e);
-        }
-
-        private void NewEncoderRadioButton_Checked(object sender, RoutedEventArgs e)
-        {
-            if (!IsLoaded)
-                return;
-
-            EncoderStatusBand.Info("Experimental encoder. Only works with images with less than 256 colors.");
         }
 
         private void TransparentColorButton_Click(object sender, RoutedEventArgs e)
@@ -901,68 +987,188 @@ namespace ScreenToGif.Windows
             var result = colorDialog.ShowDialog();
 
             if (result.HasValue && result.Value)
-            {
                 UserSettings.All.ChromaKey = colorDialog.SelectedColor;
+        }
+
+        private void FfmpegPresetsComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            var tag = (sender as Control)?.Tag as string;
+
+            switch (tag)
+            {
+                case ".gif":
+                    var gif = FfmpegGifPresetsComboBox.SelectedItem as FfmpegPreset;
+
+                    FfmpegGifParameterTextBox.IsEnabled = gif != null;
+                    FfmpegGifParameterTextBox.Text = gif?.Parameters ?? "";
+                    break;
+                case ".apng":
+                    var apng = FfmpegApngPresetsComboBox.SelectedItem as FfmpegPreset;
+
+                    FfmpegApngParameterTextBox.IsEnabled = apng != null;
+                    FfmpegApngParameterTextBox.Text = apng?.Parameters ?? "";
+                    break;
+                default:
+                    var video = FfmpegPresetsComboBox.SelectedItem as FfmpegPreset;
+
+                    FfmpegParameterTextBox.IsEnabled = video != null;
+                    FfmpegParameterTextBox.Text = video?.Parameters ?? "";
+                    break;
             }
+        }
+
+        private void AddPreset_Click(object sender, RoutedEventArgs e)
+        {
+            var tag = (sender as Control)?.Tag as string;
+
+            var dialog = new FfmpegPresetDialog
+            {
+                Extension = tag ?? UserSettings.All.LatestVideoExtension,
+                Owner = this
+            };
+
+            var result = dialog.ShowDialog();
+
+            if (!result.HasValue || !result.Value)
+                return;
+
+            UpdateFfmpegPresetsList();
+            SelectDefaultFfmpegPreset();
+        }
+
+        private void SavePreset_Click(object sender, RoutedEventArgs e)
+        {
+            PersistFfmpegPreset((sender as Control)?.Tag as string);
+        }
+
+        private void EditPreset_Click(object sender, RoutedEventArgs e)
+        {
+            var tag = (sender as Control)?.Tag as string;
+            var preset = (tag == ".gif" ? FfmpegGifPresetsComboBox : tag == ".apng" ? FfmpegApngPresetsComboBox : FfmpegPresetsComboBox).SelectedItem as FfmpegPreset;
+            
+            if (preset == null)
+                return;
+
+            var dialog = new FfmpegPresetDialog
+            {
+                IsEditing = true,
+                CurrentPreset = preset,
+                Extension = tag ?? UserSettings.All.LatestVideoExtension,
+                Owner = this
+            };
+
+            var result = dialog.ShowDialog();
+
+            if (!result.HasValue || !result.Value)
+                return;
+
+            UpdateFfmpegPresetsList();
+            SelectDefaultFfmpegPreset();
+        }
+
+        private void RemovePreset_Click(object sender, RoutedEventArgs e)
+        {
+            if (!Dialog.Ask(LocalizationHelper.Get("S.SaveAs.Presets.Remove.Title"), LocalizationHelper.Get("S.SaveAs.Presets.Remove.Header"), LocalizationHelper.Get("S.SaveAs.Presets.Remove.Message")))
+                return;
+
+            RemoveFfmpegPreset((sender as Control)?.Tag as string);
+        }
+
+        private void ResetPreset_Click(object sender, RoutedEventArgs e)
+        {
+            if (!Dialog.Ask(LocalizationHelper.Get("S.SaveAs.Presets.Reset.Title"), LocalizationHelper.Get("S.SaveAs.Presets.Reset.Header"), LocalizationHelper.Get("S.SaveAs.Presets.Reset.Message")))
+                return;
+
+            ResetFfmpegPreset((sender as Control)?.Tag as string);
         }
 
         private void ChooseLocation_Click(object sender, RoutedEventArgs e)
         {
-            //It's only a relative path if not null/empty and there's no root folder declared.
-            var isRelative = !string.IsNullOrWhiteSpace(UserSettings.All.LatestOutputFolder) && !Path.IsPathRooted(UserSettings.All.LatestOutputFolder);
-            var notAlt = !string.IsNullOrWhiteSpace(UserSettings.All.LatestOutputFolder) && UserSettings.All.LatestOutputFolder.Contains(Path.DirectorySeparatorChar);
-
-            var initial = Directory.Exists(UserSettings.All.LatestOutputFolder) ? UserSettings.All.LatestOutputFolder : Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-
-            var sfd = new SaveFileDialog
+            try
             {
-                FileName = UserSettings.All.LatestFilename,
-                InitialDirectory = isRelative ? Path.GetFullPath(initial) : initial
-            };
+                var output = GetOutputFolder();
 
-            #region Extensions
+                if (output.ToCharArray().Any(x => Path.GetInvalidPathChars().Contains(x)))
+                    output = "";
 
-            switch (UserSettings.All.SaveType)
-            {
-                case Export.Gif:
-                    sfd.Filter = "Gif animation (.gif)|*.gif";
-                    sfd.DefaultExt = ".gif";
-                    break;
-                case Export.Video:
-                    sfd.Filter = FfmpegEncoderRadioButton.IsChecked == true ? "Avi video (.avi)|*.avi|Mp4 video (.mp4)|*.mp4|WebM video|*.webm|Wmv video|*.wmv" : "Avi video (.avi)|*.avi";
-                    sfd.DefaultExt = FfmpegEncoderRadioButton.IsChecked == true ? FileTypeComboBox.SelectedItem as string : ".avi";
-                    sfd.FilterIndex = FfmpegEncoderRadioButton.IsChecked == true ? FileTypeComboBox.SelectedIndex + 1 : 0;
-                    break;
-                case Export.Images:
-                    sfd.Filter = UserSettings.All.ZipImages ? "Zip, all selected images (.zip)|*.zip" : "Png image, all selected images (.png)|*.png";
-                    sfd.DefaultExt = UserSettings.All.ZipImages ? ".zip" : ".png";
-                    break;
-                case Export.Project:
-                    sfd.Filter = "Project (.stg)|*.stg|Project as Zip (.zip)|*.zip";
-                    sfd.DefaultExt = ".stg";
-                    break;
+                //It's only a relative path if not null/empty and there's no root folder declared.
+                var isRelative = !string.IsNullOrWhiteSpace(output) && !Path.IsPathRooted(output);
+                var notAlt = !string.IsNullOrWhiteSpace(output) && GetOutputFolder().Contains(Path.DirectorySeparatorChar);
+
+                var initial = Directory.Exists(output) ? output : Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+
+                var sfd = new SaveFileDialog
+                {
+                    FileName = GetOutputFilename(),
+                    InitialDirectory = isRelative ? Path.GetFullPath(initial) : initial
+                };
+
+                #region Extensions
+
+                switch (UserSettings.All.SaveType)
+                {
+                    case Export.Gif:
+                        sfd.Filter = "Gif animation (.gif)|*.gif";
+                        sfd.DefaultExt = ".gif";
+                        break;
+                    case Export.Apng:
+                        sfd.Filter = "Animated PNG|*.png|Animated PNG|*.apng";
+                        sfd.DefaultExt = UserSettings.All.LatestApngExtension ?? ".png";
+                        break;
+                    case Export.Video:
+                        sfd.Filter = FfmpegEncoderRadioButton.IsChecked == true ? "Avi video (.avi)|*.avi|Matroska video (.mkv)|*.mkv|Mp4 video (.mp4)|*.mp4|WebM video|*.webm|Windows media video|*.wmv" : "Avi video (.avi)|*.avi";
+                        sfd.DefaultExt = FfmpegEncoderRadioButton.IsChecked == true ? FileTypeVideoComboBox.SelectedItem as string : ".avi";
+                        sfd.FilterIndex = FfmpegEncoderRadioButton.IsChecked == true ? FileTypeVideoComboBox.SelectedIndex + 1 : 0;
+                        break;
+                    case Export.Images:
+                        sfd.Filter = UserSettings.All.ZipImages ? "Zip, all selected images (.zip)|*.zip" : "Png image, all selected images (.png)|*.png";
+                        sfd.DefaultExt = UserSettings.All.ZipImages ? ".zip" : ".png";
+                        break;
+                    case Export.Project:
+                        sfd.Filter = "Project (.stg)|*.stg|Project as Zip (.zip)|*.zip";
+                        sfd.DefaultExt = ".stg";
+                        break;
+                    case Export.Photoshop:
+                        sfd.Filter = "PSD File (.psd)|*.psd";
+                        sfd.DefaultExt = ".psd";
+                        break;
+                }
+
+                #endregion
+
+                var result = sfd.ShowDialog();
+
+                if (!result.HasValue || !result.Value) return;
+
+                SetOutputFolder(Path.GetDirectoryName(sfd.FileName));
+                SetOutputFilename(Path.GetFileNameWithoutExtension(sfd.FileName));
+                UserSettings.All.OverwriteOnSave = FileExistsGrid.Visibility == Visibility.Visible;
+                SetOutputExtension(Path.GetExtension(sfd.FileName));
+
+                //Converts to a relative path again.
+                if (isRelative && !string.IsNullOrWhiteSpace(GetOutputFolder()))
+                {
+                    var selected = new Uri(GetOutputFolder());
+                    var baseFolder = new Uri(AppDomain.CurrentDomain.BaseDirectory);
+                    var relativeFolder = selected.AbsolutePath.TrimEnd(Path.DirectorySeparatorChar).TrimEnd(Path.AltDirectorySeparatorChar) == baseFolder.AbsolutePath.TrimEnd(Path.DirectorySeparatorChar).TrimEnd(Path.AltDirectorySeparatorChar) ?
+                        "." : Uri.UnescapeDataString(baseFolder.MakeRelativeUri(selected).ToString());
+
+                    //This app even returns you the correct slashes/backslashes.
+                    SetOutputFolder(notAlt ? relativeFolder : relativeFolder.Replace(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                }
             }
-
-            #endregion
-
-            var result = sfd.ShowDialog();
-
-            if (!result.HasValue || !result.Value) return;
-
-            UserSettings.All.LatestOutputFolder = Path.GetDirectoryName(sfd.FileName);
-            UserSettings.All.LatestFilename = Path.GetFileNameWithoutExtension(sfd.FileName);
-            UserSettings.All.OverwriteOnSave = FileExistsGrid.Visibility == Visibility.Visible;
-            UserSettings.All.LatestExtension = "." + Path.GetExtension(sfd.FileName);
-
-            //Converts to a relative path again.
-            if (isRelative && !string.IsNullOrWhiteSpace(UserSettings.All.LatestOutputFolder))
+            catch (ArgumentException sx)
             {
-                var selected = new Uri(UserSettings.All.LatestOutputFolder);
-                var baseFolder = new Uri(AppDomain.CurrentDomain.BaseDirectory);
-                var relativeFolder = Uri.UnescapeDataString(baseFolder.MakeRelativeUri(selected).ToString());
+                LogWriter.Log(sx, "Error while trying to choose the output path and filename.", GetOutputFolder() + GetOutputFilename());
 
-                //This app even returns you the correct slashes/backslashes.
-                UserSettings.All.LatestOutputFolder = notAlt ? relativeFolder : relativeFolder.Replace(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                SetOutputFolder("");
+                SetOutputFilename("");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                LogWriter.Log(ex, "Error while trying to choose the output path and filename.", GetOutputFolder() + GetOutputFilename());
+                throw;
             }
         }
 
@@ -981,9 +1187,16 @@ namespace ScreenToGif.Windows
             if (!IsLoaded)
                 return;
 
-            var exists = File.Exists(Path.Combine(OutputFolderTextBox.Text, OutputFilenameTextBox.Text + UserSettings.All.LatestExtension));
+            _searchTimer?.Stop();
 
-            FileExistsGrid.Visibility = exists && !UserSettings.All.SaveToClipboard ? Visibility.Visible : Visibility.Collapsed;
+            //If no file will be saved, there's no need to verify.
+            if (!GetPickLocation())
+            {
+                StatusList.Remove(StatusType.Warning);
+                return;
+            }
+
+            _searchTimer?.Start();
         }
 
         private void SaveToClipboard_CheckedChanged(object sender, RoutedEventArgs e)
@@ -999,255 +1212,510 @@ namespace ScreenToGif.Windows
         {
             try
             {
-                Process.Start(Path.Combine(OutputFolderTextBox.Text, OutputFilenameTextBox.Text + UserSettings.All.LatestExtension));
+                Process.Start(Path.Combine(GetOutputFolder(), GetOutputFilename() + GetOutputExtension()));
             }
             catch (Exception ex)
             {
-                LogWriter.Log(ex, "Open file");
+                LogWriter.Log(ex, "Open file that already exists using the hyperlink");
             }
         }
 
-        private void SaveAsButton_Click(object sender, RoutedEventArgs e)
+        private async void SaveAsButton_Click(object sender, RoutedEventArgs e)
         {
-            EditorStatusBand.Hide();
+            StatusList.Remove(StatusType.Warning);
 
-            #region Common validation
-
-            //No need to validate the properties when saving to the clipboard.
-            if (!UserSettings.All.SaveToClipboard)
+            try
             {
-                if (string.IsNullOrWhiteSpace(UserSettings.All.LatestOutputFolder))
+                var output = GetOutputFolder();
+                var name = ReplaceRegexInName(GetOutputFilename());
+                var extension = GetOutputExtension();
+
+                var pickLocation = GetPickLocation();
+                var overwrite = GetOverwriteOnSave();
+                var projectToo = GetSaveAsProjectToo();
+                var upload = GetUploadFile();
+                var saveToClipboard = GetSaveToClipboard();
+                var copyType = GetCopyType();
+                var executeCommands = GetExecuteCustomCommands();
+                var commands = GetCustomCommands();
+
+                #region Common validations
+
+                if (!pickLocation && !upload && !saveToClipboard)
                 {
-                    EditorStatusBand.Warning(StringResource("S.SaveAs.Warning.Folder"));
+                    StatusList.Warning(StringResource("S.SaveAs.Warning.Type"));
                     return;
                 }
 
-                if (!Directory.Exists(UserSettings.All.LatestOutputFolder))
+                //Check external tools (Gifski, FFmpeg).
+                if (UserSettings.All.SaveType == Export.Video)
                 {
-                    EditorStatusBand.Warning(StringResource("S.SaveAs.Warning.Folder.NotExists"));
-                    return;
-                }
-
-                if (string.IsNullOrWhiteSpace(UserSettings.All.LatestFilename))
-                {
-                    EditorStatusBand.Warning(StringResource("S.SaveAs.Warning.Filename"));
-                    return;
-                }
-            }
-
-            #endregion
-
-            if (GifRadioButton.IsChecked == true)
-            {
-                #region Gif
-
-                var fileName = UserSettings.All.SaveToClipboard ? Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".gif") : Path.Combine(UserSettings.All.LatestOutputFolder, UserSettings.All.LatestFilename + ".gif");
-
-                //If somehow, this happens.
-                if (UserSettings.All.SaveToClipboard && File.Exists(fileName))
-                    fileName = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".gif");
-
-                //Check if file exists.
-                if (!UserSettings.All.OverwriteOnSave)
-                {
-                    if (File.Exists(fileName))
+                    if (UserSettings.All.VideoEncoder == VideoEncoderType.Ffmpg)
                     {
-                        FileExistsGrid.Visibility = Visibility.Visible;
-                        EditorStatusBand.Warning(StringResource("S.SaveAs.Warning.Overwrite"));
-                        return;
-                    }
-                }
-
-                //Parameters.
-                var param = new GifParameters
-                {
-                    Type = Export.Gif,
-                    EncoderType = NewEncoderRadioButton.IsChecked == true ? GifEncoderType.ScreenToGif : LegacyEncoderRadioButton.IsChecked == true ? GifEncoderType.Legacy : GifEncoderType.PaintNet,
-
-                    DetectUnchangedPixels = UserSettings.All.DetectUnchanged,
-                    DummyColor = UserSettings.All.DetectUnchanged && UserSettings.All.PaintTransparent ? UserSettings.All.ChromaKey : new Color?(),
-
-                    Quality = UserSettings.All.Quality,
-
-                    UseGlobalColorTable = false,
-                    MaximumNumberColors = UserSettings.All.MaximumColors,
-                    ColorQuantizationType = ColorQuantizationType.Ordered,
-
-                    RepeatCount = UserSettings.All.Looped ? (UserSettings.All.RepeatForever ? 0 : UserSettings.All.RepeatCount) : -1,
-                    SaveToClipboard = UserSettings.All.SaveToClipboard,
-                    Filename = fileName
-                };
-
-                Encoder.AddItem(Project.Frames.CopyToEncode(), param, this.Scale());
-
-                #endregion
-            }
-            else if (VideoRadioButton.IsChecked == true)
-            {
-                #region Video
-
-                if (SystemEncoderRadioButton.IsChecked == true)
-                    UserSettings.All.LatestExtension = ".avi";
-                if (!new[] { ".avi", ".mp4", ".wmv", ".webm" }.Contains(UserSettings.All.LatestExtension))
-                    UserSettings.All.LatestExtension = ((ComboBoxItem)FileTypeComboBox.SelectedItem).Tag.ToString();
-
-                var fileName = Path.Combine(UserSettings.All.LatestOutputFolder, UserSettings.All.LatestFilename + UserSettings.All.LatestExtension);
-
-                //Check if file exists.
-                if (!UserSettings.All.OverwriteOnSave)
-                {
-                    if (File.Exists(fileName))
-                    {
-                        FileExistsGrid.Visibility = Visibility.Visible;
-                        EditorStatusBand.Warning(StringResource("S.SaveAs.Warning.Overwrite"));
-                        return;
-                    }
-                }
-
-                //framerate = -vf ""zoompan = d = 25 + '50*eq(in,3)' + '100*eq(in,5)'""
-                var command = "-i \"{0}\" {1} -r {2} -y \"{3}\"";
-
-                var param = new VideoParameters
-                {
-                    Type = Export.Video,
-                    VideoEncoder = FfmpegEncoderRadioButton.IsChecked == true ? VideoEncoderType.Ffmpg : VideoEncoderType.AviStandalone,
-                    Quality = (uint)AviQualitySlider.Value,
-                    FlipVideo = UserSettings.All.FlipVideo,
-                    Command = command,
-                    ExtraParameters = UserSettings.All.ExtraParameters,
-                    Framerate = UserSettings.All.LatestFps,
-                    Filename = fileName
-                };
-
-                Encoder.AddItem(Project.Frames.CopyToEncode(), param, this.Scale());
-
-                #endregion
-            }
-            else if (ImagesRadioButton.IsChecked == true)
-            {
-                #region Export frames
-
-                try
-                {
-                    if (!UserSettings.All.ZipImages)
-                    {
-                        //TODO: Check the verification for existing files. For the 4 types of files.
-                        if (FrameListView.SelectedItems.Count > 1 && !Dialog.Ask("ScreenToGif", "Exporting Frames", string.Format("Do you really wish to export {0} frames into the selected folder?", FrameListView.SelectedItems.Count)))
-                            return;
-
-                        foreach (var index in SelectedFramesIndex())
+                        if (!Util.Other.IsFfmpegPresent())
                         {
-                            //Validation.
-                            if (File.Exists(Path.Combine(UserSettings.All.LatestOutputFolder, UserSettings.All.LatestFilename + " " + index + ".png")))
-                            {
-                                FileExistsGrid.Visibility = Visibility.Visible;
-                                EditorStatusBand.Warning(StringResource("S.SaveAs.Warning.Overwrite") + " - " + UserSettings.All.LatestFilename + " " + index + ".png");
-                                return;
-                            }
+                            StatusList.Warning(LocalizationHelper.Get("Editor.Warning.Ffmpeg"), null, () => App.MainViewModel.OpenOptions.Execute(Options.ExtrasIndex));
+                            return;
                         }
 
-                        foreach (var index in SelectedFramesIndex())
+                        if (!string.IsNullOrWhiteSpace(UserSettings.All.FfmpegLocation) && UserSettings.All.FfmpegLocation.ToCharArray().Any(x => Path.GetInvalidPathChars().Contains(x)))
                         {
-                            var fileName = Path.Combine(UserSettings.All.LatestOutputFolder, UserSettings.All.LatestFilename + " " + index + ".png");
+                            StatusList.Warning(LocalizationHelper.Get("S.Options.Extras.FfmpegLocation.Invalid"));
+                            return;
+                        }
 
-                            File.Copy(FrameListView.Items.OfType<FrameListBoxItem>().ToList()[index].Image, fileName);
+                        if (FfmpegPresetsComboBox.SelectionBoxItem == null)
+                        {
+                            StatusList.Warning(LocalizationHelper.Get("S.SaveAs.Presets.Warning.NoSelection"));
+                            return;
                         }
                     }
                     else
-                    {
-                        var fileName = Path.Combine(UserSettings.All.LatestOutputFolder, UserSettings.All.LatestFilename + ".zip");
+                        UserSettings.All.LatestVideoExtension = ".avi";
 
-                        //Check if file exists.
-                        if (!UserSettings.All.OverwriteOnSave)
+                    if (!new[] { ".avi", ".mp4", ".wmv", ".webm" }.Contains(UserSettings.All.LatestVideoExtension))
+                        UserSettings.All.LatestVideoExtension = (string)FileTypeVideoComboBox.SelectedItem;
+
+                    extension = GetOutputExtension();
+                }
+                else if (UserSettings.All.SaveType == Export.Gif)
+                {
+                    if (UserSettings.All.GifEncoder == GifEncoderType.FFmpeg)
+                    {
+                        if (!Util.Other.IsFfmpegPresent())
                         {
-                            if (File.Exists(fileName))
-                            {
-                                FileExistsGrid.Visibility = Visibility.Visible;
-                                EditorStatusBand.Warning(StringResource("S.SaveAs.Warning.Overwrite"));
-                                return;
-                            }
+                            StatusList.Warning(LocalizationHelper.Get("Editor.Warning.Ffmpeg"), null, () => App.MainViewModel.OpenOptions.Execute(Options.ExtrasIndex));
+                            return;
                         }
 
-                        if (File.Exists(fileName))
-                            File.Delete(fileName);
+                        if (!string.IsNullOrWhiteSpace(UserSettings.All.FfmpegLocation) && UserSettings.All.FfmpegLocation.ToCharArray().Any(x => Path.GetInvalidPathChars().Contains(x)))
+                        {
+                            StatusList.Warning(LocalizationHelper.Get("S.Options.Extras.FfmpegLocation.Invalid"));
+                            return;
+                        }
+                    }
+                    else if (UserSettings.All.GifEncoder == GifEncoderType.Gifski)
+                    {
+                        if (!Util.Other.IsGifskiPresent())
+                        {
+                            StatusList.Warning(LocalizationHelper.Get("Editor.Warning.Gifski"), null, () => App.MainViewModel.OpenOptions.Execute(Options.ExtrasIndex));
+                            return;
+                        }
 
-                        var exportDirectory = Path.Combine(Path.GetDirectoryName(Project.Frames.First().Path), "Export");
-
-                        if (Directory.Exists(exportDirectory))
-                            Directory.Delete(exportDirectory, true);
-
-                        var dir = Directory.CreateDirectory(exportDirectory);
-
-                        foreach (var frame in FrameListView.SelectedItems.OfType<FrameListBoxItem>())
-                            File.Copy(frame.Image, Path.Combine(dir.FullName, Path.GetFileName(frame.Image)), true);
-
-                        ZipFile.CreateFromDirectory(dir.FullName, fileName);
-
-                        Directory.Delete(dir.FullName, true);
+                        if (!string.IsNullOrWhiteSpace(UserSettings.All.GifskiLocation) && UserSettings.All.GifskiLocation.ToCharArray().Any(x => Path.GetInvalidPathChars().Contains(x)))
+                        {
+                            StatusList.Warning(LocalizationHelper.Get("S.Options.Extras.GifskiLocation.Invalid"));
+                            return;
+                        }
                     }
                 }
-                catch (Exception ex)
+                else if (UserSettings.All.SaveType == Export.Apng)
                 {
-                    LogWriter.Log(ex, "Exporting frames");
+                    if (UserSettings.All.ApngEncoder == ApngEncoderType.FFmpeg)
+                    {
+                        if (!Util.Other.IsFfmpegPresent())
+                        {
+                            StatusList.Warning(LocalizationHelper.Get("Editor.Warning.Ffmpeg"), null, () => App.MainViewModel.OpenOptions.Execute(Options.ExtrasIndex));
+                            return;
+                        }
 
-                    Dispatcher.Invoke(() => Dialog.Ok("Error While Exporting", "Error while exporting the frames", ex.Message));
+                        if (!string.IsNullOrWhiteSpace(UserSettings.All.FfmpegLocation) && UserSettings.All.FfmpegLocation.ToCharArray().Any(x => Path.GetInvalidPathChars().Contains(x)))
+                        {
+                            StatusList.Warning(LocalizationHelper.Get("S.Options.Extras.FfmpegLocation.Invalid"));
+                            return;
+                        }
+                    }
+
+                    extension = GetOutputExtension();
+                }
+
+                if (pickLocation)
+                {
+                    if (string.IsNullOrWhiteSpace(output))
+                    {
+                        StatusList.Warning(StringResource("S.SaveAs.Warning.Folder"));
+                        return;
+                    }
+
+                    if (output.ToCharArray().Any(x => Path.GetInvalidPathChars().Contains(x)))
+                    {
+                        StatusList.Warning(StringResource("S.SaveAs.Warning.Folder.Invalid"));
+                        return;
+                    }
+
+                    if (!Directory.Exists(output))
+                    {
+                        StatusList.Warning(StringResource("S.SaveAs.Warning.Folder.NotExists"));
+                        return;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        StatusList.Warning(StringResource("S.SaveAs.Warning.Filename"));
+                        return;
+                    }
+
+                    if (name.ToCharArray().Any(x => Path.GetInvalidFileNameChars().Contains(x)))
+                    {
+                        StatusList.Warning(StringResource("S.SaveAs.Warning.Filename.Invalid"));
+                        return;
+                    }
+
+                    if (!overwrite && File.Exists(Path.Combine(output, name + GetOutputExtension())))
+                    {
+                        FileExistsGrid.Visibility = Visibility.Visible;
+                        StatusList.Warning(StringResource("S.SaveAs.Warning.Overwrite"));
+                        return;
+                    }
+
+                    if (projectToo)
+                    {
+                        if (!overwrite && File.Exists(Path.Combine(output, name + (UserSettings.All.LatestProjectExtension ?? ".stg"))))
+                        {
+                            StatusList.Warning(StringResource("S.SaveAs.Warning.Overwrite"));
+                            return;
+                        }
+                    }
+                }
+
+                if (upload)
+                {
+                    if (UserSettings.All.LatestUploadService == UploadService.None)
+                    {
+                        StatusList.Warning(LocalizationHelper.Get("S.SaveAs.Warning.Upload.None"));
+                        return;
+                    }
+
+                    if (UserSettings.All.LatestUploadService == UploadService.Imgur && !await Imgur.IsAuthorized())
+                    {
+                        StatusList.Warning(LocalizationHelper.Get("S.SaveAs.Warning.Upload.NotAuthorized"));
+                        return;
+                    }
+
+                    if (UserSettings.All.LatestUploadService == UploadService.Yandex && !YandexDisk.IsAuthorized())
+                    {
+                        StatusList.Warning(LocalizationHelper.Get("S.SaveAs.Warning.Upload.NotAuthorized"));
+                        return;
+                    }
+                }
+
+                if (saveToClipboard && copyType == CopyType.Link && !upload)
+                {
+                    StatusList.Warning(LocalizationHelper.Get("S.SaveAs.Warning.Copy.Link"));
+                    return;
+                }
+
+                //When only copying to the clipboard or uploading.
+                if (!pickLocation)
+                {
+                    //If somehow this happens, try again.
+                    if (File.Exists(Path.Combine(output, name)))
+                        name = GetOutputFilename();
+                }
+
+                if (executeCommands)
+                {
+                    if (string.IsNullOrWhiteSpace(commands))
+                    {
+                        StatusList.Warning(LocalizationHelper.Get("S.SaveAs.Warning.Commands.Empty"));
+                        return;
+                    }
                 }
 
                 #endregion
+
+                var filename = Path.Combine(output, name + extension);
+                var param = new Parameters
+                {
+                    Type = UserSettings.All.SaveType,
+                    Filename = filename,
+                    CopyToClipboard = saveToClipboard,
+                    CopyType = copyType,
+                    Upload = upload,
+                    UploadDestination = UserSettings.All.LatestUploadService,
+                    ExecuteCommands = executeCommands,
+                    PostCommands = commands
+                };
+
+                switch (UserSettings.All.SaveType)
+                {
+                    case Export.Gif:
+                    {
+                        param.EncoderType = UserSettings.All.GifEncoder;
+                        param.DetectUnchangedPixels = UserSettings.All.DetectUnchanged;
+                        param.DummyColor = UserSettings.All.DetectUnchanged && UserSettings.All.PaintTransparent ? UserSettings.All.ChromaKey : new Color?();
+                        param.Quality = UserSettings.All.Quality;
+                        param.UseGlobalColorTable = false;
+                        param.MaximumNumberColors = UserSettings.All.MaximumColors;
+                        param.RepeatCount = UserSettings.All.Looped ? (UserSettings.All.RepeatForever ? 0 : UserSettings.All.RepeatCount) : -1;
+                        param.Command = "-vsync 2 -safe 0 -f concat -i \"{0}\" {1} -y \"{2}\"";
+                        param.ExtraParameters = FfmpegGifParameterTextBox.Text;
+                        break;
+                    }
+
+                    case Export.Apng:
+                    {
+                        param.ApngEncoder = UserSettings.All.ApngEncoder;
+                        param.DetectUnchangedPixels = UserSettings.All.DetectUnchangedApng;
+                        param.DummyColor = UserSettings.All.DetectUnchangedApng && UserSettings.All.PaintTransparentApng ? Colors.Transparent : new Color?();
+                        param.RepeatCount = UserSettings.All.LoopedApng ? (UserSettings.All.RepeatForeverApng ? 0 : UserSettings.All.RepeatCountApng) : -1;
+                        param.Command = "-vsync 2 -safe 0 -f concat -i \"{0}\" {1} -plays {2} -f apng -y \"{3}\"";
+                        param.ExtraParameters = FfmpegApngParameterTextBox.Text;
+                        break;
+                    }
+
+                    case Export.Video:
+                    {
+                        var size = Project.Frames[0].Path.SizeOf();
+
+                        param.VideoEncoder = FfmpegEncoderRadioButton.IsChecked == true ? VideoEncoderType.Ffmpg : VideoEncoderType.AviStandalone;
+                        param.VideoQuality = (uint)AviQualitySlider.Value;
+                        param.FlipVideo = UserSettings.All.FlipVideo;
+                        param.Command = "-vsync 2 -safe 0 -f concat -i \"{0}\" {1} -y \"{2}\"";
+                        param.Height = size.Height.DivisibleByTwo();
+                        param.Width = size.Width.DivisibleByTwo();
+                        param.ExtraParameters = FfmpegParameterTextBox.Text;
+                        param.Framerate = UserSettings.All.OutputFramerate;
+                        break;
+                    }
+
+                    case Export.Images:
+                    {
+                        param.CompressionLevel = CompressionLevel.Optimal;
+
+                        if (!UserSettings.All.ZipImages)
+                        {
+                            //TODO: Check the verification for existing files. For the 4 types of files.
+                            if (FrameListView.SelectedItems.Count > 1 && !Dialog.Ask(LocalizationHelper.Get("S.SaveAs.Frames.Confirmation.Title"),
+                                    LocalizationHelper.Get("S.SaveAs.Frames.Confirmation.Instruction"), LocalizationHelper.GetWithFormat("S.SaveAs.Frames.Confirmation.Message", FrameListView.SelectedItems.Count)))
+                            {
+                                StatusList.Warning(LocalizationHelper.Get("S.SaveAs.Warning.Canceled"));
+                                return;
+                            }
+
+                            var selected = SelectedFramesIndex();
+                            var padLength = selected.OrderByDescending(a => a).FirstOrDefault().ToString().Length;
+
+                            foreach (var index in selected)
+                            {
+                                var imageName = $"{name} {index.ToString().PadLeft(padLength, '0')}.png";
+                                var path = Path.Combine(UserSettings.All.LatestImageOutputFolder, imageName);
+
+                                if (UserSettings.All.OverwriteOnSaveImages)
+                                    continue;
+
+                                if (!File.Exists(path))
+                                    continue;
+                                
+                                FileExistsGrid.Visibility = Visibility.Visible;
+                                StatusList.Warning($"{LocalizationHelper.Get("S.SaveAs.Warning.Overwrite")} - {imageName}");
+                                return;
+                            }
+
+                            foreach (var index in selected)
+                            {
+                                var path = Path.Combine(UserSettings.All.LatestImageOutputFolder, $"{name} {index.ToString().PadLeft(padLength, '0')}.png");
+
+                                if (File.Exists(path))
+                                    File.Delete(path);
+
+                                File.Copy(FrameListView.Items.OfType<FrameListBoxItem>().ToList()[index].Image, path);
+                            }
+                        }
+                        else
+                        {
+                            var fileName = Path.Combine(UserSettings.All.LatestImageOutputFolder, name + ".zip");
+
+                            //Check if file exists.
+                            if (!UserSettings.All.OverwriteOnSaveImages)
+                            {
+                                if (File.Exists(fileName))
+                                {
+                                    FileExistsGrid.Visibility = Visibility.Visible;
+                                    StatusList.Warning(LocalizationHelper.Get("S.SaveAs.Warning.Overwrite"));
+                                    return;
+                                }
+                            }
+
+                            if (File.Exists(fileName))
+                                File.Delete(fileName);
+
+                            //Temporary folder.
+                            var outPath = Path.Combine(Project.FullPath, "Export");
+
+                            if (Directory.Exists(outPath))
+                                Directory.Delete(outPath, true);
+
+                            var dir = Directory.CreateDirectory(outPath);
+
+                            //Get files.
+                            var selected = SelectedFramesIndex();
+                            var padLength = selected.OrderByDescending(a => a).FirstOrDefault().ToString().Length;
+
+                            foreach (var index in selected)
+                            {
+                                var path = Path.Combine(dir.FullName, $"{index.ToString().PadLeft(padLength, '0')}.png");
+                                File.Copy(FrameListView.Items.OfType<FrameListBoxItem>().ToList()[index].Image, path, true);
+                            }
+
+                            //Create Zip and clear temporary folder.
+                            ZipFile.CreateFromDirectory(dir.FullName, fileName);
+                            Directory.Delete(dir.FullName, true);
+                        }
+
+                        break;
+                    }
+
+                    case Export.Project:
+                    {
+                        Project.Persist();
+
+                        param.CompressionLevel = UserSettings.All.CompressionLevelProject;
+                        break;
+                    }
+
+                    case Export.Photoshop:
+                    {
+                        var size2 = Project.Frames[0].Path.SizeOf();
+
+                        param.Height = size2.Height;
+                        param.Width = size2.Width;
+                        param.Compress = UserSettings.All.CompressImage;
+                        param.SaveTimeline = UserSettings.All.SaveTimeline;
+                        break;
+                    }
+
+                    default:
+                        throw new ArgumentOutOfRangeException(nameof(UserSettings.All.SaveType), "Export type not selected.");
+                }
+
+                //Save, using the encoder.
+                if (UserSettings.All.SaveType != Export.Images)
+                {
+                    _saveDel = SaveAsync;
+                    _saveDel.BeginInvoke(Project.Frames, param, this.Scale(), projectToo, false, SaveCallback, null);
+                }
             }
-            else
+            catch (Exception ex)
             {
-                #region Export project
-
-                if (UserSettings.All.LatestExtension != ".stg" && UserSettings.All.LatestExtension != ".zip")
-                    UserSettings.All.LatestExtension = ".stg";
-
-                var fileName = Path.Combine(UserSettings.All.LatestOutputFolder, UserSettings.All.LatestFilename + UserSettings.All.LatestExtension);
-
-                _saveProjectDel = SaveProject;
-                _saveProjectDel.BeginInvoke(fileName, SaveProjectCallback, null);
-
-                #endregion
+                LogWriter.Log(ex, "Save As");
+                ErrorDialog.Ok("ScreenToGif", "Error while trying to save", ex.Message, ex); //TODO: Translate
             }
 
             ClosePanel();
         }
 
 
-        private void SaveAsProject_Executed(object sender, ExecutedRoutedEventArgs e)
+        private void Load_Executed(object sender, ExecutedRoutedEventArgs e)
         {
             e.Handled = true;
             Pause();
 
-            var fileName = Util.Other.FileName("stg", Project.Frames.Count);
+            var ofd = new OpenFileDialog
+            {
+                Multiselect = true,
+                AddExtension = true,
+                CheckFileExists = true,
+                Title = LocalizationHelper.Get("Editor.OpenMedia"),
+                Filter = "All supported files (*.apng, *.avi, *.bmp, *.gif, *.jpg, *.jpeg, *.mkv, *.mp4, *.png, *.stg, *.webm, *.wmv, *.zip)|*.apng;*.avi;*.bmp;*.gif;*.jpg;*.jpeg;*.mkv;*.mp4;*.png;*.stg;*.webm;*.wmv;*.zip|" +
+                         "Image (*.apng, *.bmp, *.gif, *.jpg, *.jpeg, *.png)|*.apng;*.bmp;*.gif;*.jpg;*.jpeg;*.png|" +
+                         "Video (*.avi, *.mkv, *.mp4, *.webm, *.wmv)|*.avi;*.mkv;*.mp4;*.webm;*.wmv|" +
+                         "ScreenToGif Project (*.stg, *.zip) |*.stg;*.zip",
+            };
 
-            if (string.IsNullOrEmpty(fileName)) return;
+            var result = ofd.ShowDialog();
 
-            _saveProjectDel = SaveProject;
-            _saveProjectDel.BeginInvoke(fileName, SaveProjectCallback, null);
+            #region Validation
+
+            var extensionList = ofd.FileNames.Select(s => Path.GetExtension(s).ToLowerInvariant()).ToList();
+
+            var media = new[] { "apng", "avi", "bmp", "gif", "jpg", "jpeg", "mkv", "mp4", "png", "webm", "wmv" };
+
+            var projectCount = extensionList.Count(x => !string.IsNullOrEmpty(x) && (x.Equals(".stg") || x.Equals(".zip")));
+            var mediaCount = extensionList.Count(x => !string.IsNullOrEmpty(x) && media.Contains(x));
+
+            if (projectCount != 0 && mediaCount != 0)
+            {
+                Dispatcher.Invoke(() => StatusList.Warning(FindResource("Editor.InvalidLoadingFiles").ToString()));
+                return;
+            }
+
+            #endregion
+
+            if (result.HasValue && result.Value)
+            {
+                ClosePanel();
+
+                //DiscardProject_Executed(null, null);
+
+                _importFramesDel = ImportFrom;
+                _importFramesDel.BeginInvoke(ofd.FileNames.ToList(), ImportFromCallback, null);
+            }
+        }
+
+        private void LoadRecent_Executed(object sender, ExecutedRoutedEventArgs e)
+        {
+            e.Handled = true;
+            Pause();
+
+            ShowPanel(PanelType.LoadRecent, StringResource("Editor.File.LoadRecent"), "Vector.Project", LoadRecentButton_Click);
+        }
+
+        private void RecentDataGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            LoadRecentButton_Click(sender, e);
+        }
+
+        private void RecentDataGrid_PreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Return || e.Key == Key.Enter)
+            {
+                LoadRecentButton_Click(sender, e);
+                e.Handled = true;
+            }
+        }
+
+        private void LoadRecentButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (RecentDataGrid.SelectedIndex < 0)
+            {
+                StatusList.Warning(StringResource("Recent.Warning.NothingSelected"));
+                return;
+            }
+
+            try
+            {
+                if (!(RecentDataGrid.SelectedItem is ProjectInfo project))
+                    throw new Exception("Nothing selected");
+
+                if (Project != null && Project.RelativePath == project.RelativePath)
+                {
+                    StatusList.Warning(StringResource("Recent.Warning.SameOpened"));
+                    return;
+                }
+
+                if (MutexList.IsInUse(project.RelativePath))
+                {
+                    StatusList.Warning(StringResource("Recent.Warning.AlreadyOpened"));
+                    return;
+                }
+
+                LoadProject(project, true, false, true);
+            }
+            catch (Exception ex)
+            {
+                ErrorDialog.Ok("ScreenToGif", "Error while trying to load", ex.Message, ex);
+                return;
+            }
+
+            _applyAction = null;
+
+            ClosePanel();
         }
 
         private void DiscardProject_Executed(object sender, ExecutedRoutedEventArgs e)
         {
-            Pause();
-
-            #region Prepare UI
-
-            ClosePanel();
-
-            FrameListView.SelectedIndex = -1;
-            FrameListView.SelectionChanged -= FrameListView_SelectionChanged;
-
-            FrameListView.Items.Clear();
-            ClipboardListBox.Items.Clear();
-            ZoomBoxControl.Clear();
-
-            #endregion
-
-            if (Project == null || !Project.Any) return;
-
-            _discardFramesDel = Discard;
-            _discardFramesDel.BeginInvoke(Project, DiscardCallback, null);
+            Discard(UserSettings.All.NotifyProjectDiscard);
         }
 
         #endregion
@@ -1281,7 +1749,7 @@ namespace ScreenToGif.Windows
             Project.Frames = ActionStack.Undo(Project.Frames.CopyList());
             LoadProject(Project, false, false);
 
-            ShowHint("Hint.Undo");
+            ShowHint("S.Hint.Undo");
         }
 
         private void Reset_Executed(object sender, ExecutedRoutedEventArgs e)
@@ -1292,7 +1760,7 @@ namespace ScreenToGif.Windows
             Project.Frames = ActionStack.Reset(Project.Frames.CopyList());
             LoadProject(Project, false, false);
 
-            ShowHint("Hint.Reset");
+            ShowHint("S.Hint.Reset");
         }
 
         private void Redo_Executed(object sender, ExecutedRoutedEventArgs e)
@@ -1303,7 +1771,7 @@ namespace ScreenToGif.Windows
             Project.Frames = ActionStack.Redo(Project.Frames.CopyList());
             LoadProject(Project, false, false);
 
-            ShowHint("Hint.Redo");
+            ShowHint("S.Hint.Redo");
         }
 
         #endregion
@@ -1326,7 +1794,7 @@ namespace ScreenToGif.Windows
             {
                 Dialog.Ok(FindResource("Editor.Clipboard.InvalidCut.Title").ToString(),
                     FindResource("Editor.Clipboard.InvalidCut.Instruction").ToString(),
-                    FindResource("Editor.Clipboard.InvalidCut.Message").ToString(), Dialog.Icons.Info);
+                    FindResource("Editor.Clipboard.InvalidCut.Message").ToString(), Icons.Info);
                 return;
             }
 
@@ -1366,7 +1834,7 @@ namespace ScreenToGif.Windows
 
             if (selected.Count > 1)
             {
-                imageItem.Tag = $"{StringResource("ImportVideo.Frames")} {string.Join(", ", selected.Select(x => x.FrameNumber))}";
+                imageItem.Tag = $"{StringResource("S.ImportVideo.Frames")} {string.Join(", ", selected.Select(x => x.FrameNumber))}";
                 imageItem.Image = FindResource("Vector.ImageStack") as Canvas;
                 imageItem.Content = $"{list.Count} Images";
             }
@@ -1382,7 +1850,7 @@ namespace ScreenToGif.Windows
             ClipboardListBox.Items.Add(imageItem);
             ClipboardListBox.SelectedIndex = ClipboardListBox.Items.Count - 1;
 
-            ShowHint("Hint.Cut", selected.Count);
+            ShowHint("S.Hint.Cut", false, selected.Count);
 
             ShowPanel(PanelType.Clipboard, FindResource("Editor.Home.Clipboard").ToString(), "Vector.Paste");
         }
@@ -1423,7 +1891,7 @@ namespace ScreenToGif.Windows
             ClipboardListBox.Items.Add(imageItem);
             ClipboardListBox.SelectedIndex = ClipboardListBox.Items.Count - 1;
 
-            ShowHint("Hint.Copy", selected.Count);
+            ShowHint("S.Hint.Copy", false, selected.Count);
 
             ShowPanel(PanelType.Clipboard, FindResource("Editor.Home.Clipboard").ToString(), "Vector.Paste");
         }
@@ -1443,7 +1911,7 @@ namespace ScreenToGif.Windows
                     ? index
                     : index + 1;
 
-            var clipData = Util.Clipboard.Paste(Project.Frames[0].Path, ClipboardListBox.SelectedIndex, ClipboardListBox.SelectedIndex);
+            var clipData = Util.Clipboard.Paste(Project.FullPath, ClipboardListBox.SelectedIndex, ClipboardListBox.SelectedIndex);
 
             ActionStack.SaveState(ActionStack.EditAction.Add, index, clipData.Count);
 
@@ -1453,7 +1921,7 @@ namespace ScreenToGif.Windows
 
             LoadSelectedStarter(index, Project.Frames.Count - 1);
 
-            ShowHint("Hint.Paste", clipData.Count);
+            ShowHint("S.Hint.Paste", false, clipData.Count);
         }
 
         private void ShowClipboardButton_Click(object sender, RoutedEventArgs e)
@@ -1501,27 +1969,85 @@ namespace ScreenToGif.Windows
         {
             ZoomBoxControl.Zoom = 1.0;
 
-            ShowHint("Hint.Zoom", 100);
+            ShowHint("S.Hint.Zoom", false, 100);
+        }
+
+        private void SizeToContent_Executed(object sender, ExecutedRoutedEventArgs e)
+        {
+            WindowState = WindowState.Normal;
+            ZoomBoxControl.UpdateLayout();
+
+            var size = ZoomBoxControl.GetElementSize(true);
+
+            //Tried to get the size again.
+            if (size.Width < 2)
+                size = Project.Frames[0].Path.NonScaledSize();
+
+            //If failed again, abort.
+            if (size.Width < 2)
+                return;
+
+            var scale = this.Scale();
+
+            var borderHeight = ActualHeight - MainGrid.ActualHeight;
+            var borderWidth = ActualWidth - MainGrid.ActualWidth;
+
+            //Bug: I need to take into consideration that the RibbonTabControl.ActualHeight can change, because the tab headers can occupy 2 rows.
+            var width = (size.Width * ZoomBoxControl.Zoom / ZoomBoxControl.ScaleDiff + 60) + borderWidth;
+            var height = (size.Height * ZoomBoxControl.Zoom / ZoomBoxControl.ScaleDiff + (RibbonTabControl.ActualHeight + FrameListView.ActualHeight + LowerGrid.ActualHeight)) + borderHeight;
+
+            //If image is too small, size to the minimum size.
+            if (width < 770)
+                width = 770;
+
+            if (height < 575)
+                height = 575;
+
+            var screen = Monitor.AllMonitorsScaled(scale).FirstOrDefault(x => x.Bounds.Contains(new System.Windows.Point(Left, Top))) ??
+                         Monitor.AllMonitorsScaled(scale).FirstOrDefault(x => x.IsPrimary);
+
+            if (screen != null)
+            {
+                //If the resulting size is too big, fit the window on the available working area.
+                if (screen.WorkingArea.Width < width)
+                    width = screen.WorkingArea.Width;
+
+                if (screen.WorkingArea.Height < height)
+                    height = screen.WorkingArea.Height;
+
+                //If the window overflows, put back in place.
+                if (Left + width > screen.WorkingArea.Right)
+                    Left = screen.WorkingArea.Right - width;
+
+                if (Top + height > screen.WorkingArea.Bottom)
+                    Top = screen.WorkingArea.Bottom - height;
+            }
+
+            Width = width;
+            Height = height;
         }
 
         private void FitImage_Executed(object sender, ExecutedRoutedEventArgs e)
         {
-            var image = Project.Frames.First().Path.SourceFrom();
+            //Reset the zoom, to get the actual image size.
+            ZoomBoxControl.Zoom = 1;
+            ZoomBoxControl.UpdateLayout();
+
+            var size = ZoomBoxControl.GetElementSize();
+
+            if (size.Width < 2)
+                size = Project.Frames[0].Path.ScaledSize();
 
             #region Calculate the Zoom
 
             var zoomHeight = 1D;
             var zoomWidth = 1D;
 
-            if (image.Width > ZoomBoxControl.ActualWidth)
-            {
-                zoomWidth = ZoomBoxControl.ActualWidth / image.Width;
-            }
+            if (size.Width > ZoomBoxControl.ActualWidth)
+                zoomWidth = ZoomBoxControl.ActualWidth / size.Width;// * this.Scale();
 
-            if (image.Height > ZoomBoxControl.ActualHeight)
-            {
-                zoomHeight = ZoomBoxControl.ActualHeight / image.Height;
-            }
+            if (size.Height > ZoomBoxControl.ActualHeight)
+                zoomHeight = ZoomBoxControl.ActualHeight / size.Height;// * this.Scale();
 
             #endregion
 
@@ -1536,7 +2062,7 @@ namespace ScreenToGif.Windows
 
             #endregion
 
-            ShowHint("Hint.Zoom", Convert.ToInt32(ZoomBoxControl.Zoom * 100));
+            ShowHint("S.Hint.Zoom", false, Convert.ToInt32(ZoomBoxControl.Zoom * 100));
 
             GC.Collect(1);
         }
@@ -1547,7 +2073,7 @@ namespace ScreenToGif.Windows
 
         private void Selection_CanExecute(object sender, CanExecuteRoutedEventArgs e)
         {
-            e.CanExecute = !IsLoading && FrameListView != null && FrameListView.HasItems && !IsLoading;
+            e.CanExecute = !IsLoading && FrameListView != null && FrameListView.HasItems;
         }
 
         private void SelectAll_Executed(object sender, ExecutedRoutedEventArgs e)
@@ -1556,7 +2082,7 @@ namespace ScreenToGif.Windows
 
             FrameListView.SelectAll();
 
-            ShowHint("Hint.SelectAll");
+            ShowHint("S.Hint.SelectAll");
         }
 
         private void GoTo_Executed(object sender, ExecutedRoutedEventArgs e)
@@ -1566,12 +2092,19 @@ namespace ScreenToGif.Windows
             var go = new GoTo(Project.Frames.Count - 1) { Owner = this };
             var result = go.ShowDialog();
 
-            if (result.HasValue && result.Value)
-            {
-                FrameListView.SelectedIndex = go.Selected;
+            if (!result.HasValue || !result.Value) return;
 
-                ShowHint("Hint.SelectSingle", go.Selected);
-            }
+            var item = FrameListView.Items[go.Selected] as FrameListBoxItem;
+
+            if (item == null)
+                return;
+
+            Keyboard.Focus(item);
+
+            FrameListView.ScrollIntoView(item);
+            FrameListView.SelectedIndex = go.Selected;
+
+            ShowHint("S.Hint.SelectSingle", false, go.Selected);
         }
 
         private void InverseSelection_Executed(object sender, ExecutedRoutedEventArgs e)
@@ -1583,7 +2116,7 @@ namespace ScreenToGif.Windows
                 item.IsSelected = !item.IsSelected;
             }
 
-            ShowHint("Hint.SelectInverse");
+            ShowHint("S.Hint.SelectInverse");
         }
 
         private void DeselectAll_Executed(object sender, ExecutedRoutedEventArgs e)
@@ -1593,7 +2126,7 @@ namespace ScreenToGif.Windows
 
             FrameListView.SelectedIndex = -1;
 
-            ShowHint("Hint.Deselect");
+            ShowHint("S.Hint.Deselect");
         }
 
         #endregion
@@ -1688,6 +2221,11 @@ namespace ScreenToGif.Windows
             e.CanExecute = FrameListView != null && !IsLoading && FrameListView.Items.Count > 5;
         }
 
+        private void RemoveDuplicates_CanExecute(object sender, CanExecuteRoutedEventArgs e)
+        {
+            e.CanExecute = FrameListView != null && !IsLoading && FrameListView.Items.Count > 1;
+        }
+
         private void Delete_Executed(object sender, ExecutedRoutedEventArgs e)
         {
             Pause();
@@ -1698,19 +2236,22 @@ namespace ScreenToGif.Windows
 
                 if (Project.Frames.Count == FrameListView.SelectedItems.Count)
                 {
-                    if (Dialog.Ask(FindResource("Editor.Remove.Title").ToString(),
-                        FindResource("Editor.Remove.Instruction").ToString(),
-                        FindResource("Editor.Remove.Message").ToString()))
-                    {
-                        DiscardProject_Executed(null, null);
-                    }
+                    //If the user wants to delete all frames, discard the project.
+                    if (!UserSettings.All.NotifyProjectDiscard ||
+                        Dialog.Ask(LocalizationHelper.Get("Editor.DeleteAll.Title"), LocalizationHelper.Get("Editor.DeleteAll.Instruction"), LocalizationHelper.Get("Editor.DeleteAll.Message"), false))
+                        Discard(false);
 
                     return;
                 }
 
-                #endregion
+                if (UserSettings.All.NotifyFrameDeletion)
+                {
+                    if (!Dialog.Ask(LocalizationHelper.Get("Editor.DeleteFrames.Title"), LocalizationHelper.Get("Editor.DeleteFrames.Instruction"),
+                        string.Format(LocalizationHelper.Get("Editor.DeleteFrames.Message"), FrameListView.SelectedItems.Count)))
+                        return;
+                }
 
-                //TODO: Error when resetting after deleting frames quickly. Not sure why.
+                #endregion
 
                 var selected = FrameListView.SelectedItems.OfType<FrameListBoxItem>().ToList();
                 var selectedOrdered = selected.OrderByDescending(x => x.FrameNumber).ToList();
@@ -1728,14 +2269,15 @@ namespace ScreenToGif.Windows
 
                 SelectNear(selectedOrdered.Last().FrameNumber);
 
+                Project.Persist();
                 UpdateStatistics();
-                ShowHint("Hint.DeleteFrames", selected.Count);
+                ShowHint("S.Hint.DeleteFrames", false, selected.Count);
             }
             catch (Exception ex)
             {
                 LogWriter.Log(ex, "Error While Trying to Delete Frames");
 
-                ErrorDialog.Ok(FindResource("Editor.Title") as string, "Error while trying to delete frames", ex.Message, ex);
+                ErrorDialog.Ok(LocalizationHelper.Get("Editor.Title") as string, "Error while trying to delete frames", ex.Message, ex);
             }
         }
 
@@ -1743,29 +2285,42 @@ namespace ScreenToGif.Windows
         {
             Pause();
 
-            ActionStack.SaveState(ActionStack.EditAction.Remove, Project.Frames, Util.Other.CreateIndexList(0, FrameListView.SelectedIndex));
+            if (UserSettings.All.NotifyFrameDeletion)
+            {
+                if (!Dialog.Ask(LocalizationHelper.Get("Editor.DeleteFrames.Title"), LocalizationHelper.Get("Editor.DeleteFrames.Instruction"),
+                    string.Format(LocalizationHelper.Get("Editor.DeleteFrames.Message"), FrameListView.SelectedIndex)))
+                    return;
+            }
+
+            ActionStack.SaveState(ActionStack.EditAction.Remove, Project.Frames, Util.Other.ListOfIndexesOld(0, FrameListView.SelectedIndex - 1));
 
             var count = FrameListView.SelectedIndex;
 
             for (var index = FrameListView.SelectedIndex - 1; index >= 0; index--)
-            {
                 DeleteFrame(index);
-            }
 
             AdjustFrameNumbers(0);
             SelectNear(0);
 
+            Project.Persist();
             UpdateStatistics();
-            ShowHint("Hint.DeleteFrames", count);
+            ShowHint("S.Hint.DeleteFrames", false, count);
         }
 
         private void DeleteNext_Executed(object sender, ExecutedRoutedEventArgs e)
         {
             Pause();
 
+            if (UserSettings.All.NotifyFrameDeletion)
+            {
+                if (!Dialog.Ask(LocalizationHelper.Get("Editor.DeleteFrames.Title"), LocalizationHelper.Get("Editor.DeleteFrames.Instruction"),
+                    string.Format(LocalizationHelper.Get("Editor.DeleteFrames.Message"), FrameListView.Items.Count - FrameListView.SelectedIndex - 1)))
+                    return;
+            }
+
             var countList = FrameListView.Items.Count - 1; //So we have a fixed value.
 
-            ActionStack.SaveState(ActionStack.EditAction.Remove, Project.Frames, Util.Other.CreateIndexList2(FrameListView.SelectedIndex + 1, FrameListView.Items.Count - FrameListView.SelectedIndex - 1));
+            ActionStack.SaveState(ActionStack.EditAction.Remove, Project.Frames, Util.Other.ListOfIndexes(FrameListView.SelectedIndex + 1, FrameListView.Items.Count - FrameListView.SelectedIndex - 1));
 
             var count = FrameListView.Items.Count - FrameListView.SelectedIndex - 1;
 
@@ -1776,8 +2331,25 @@ namespace ScreenToGif.Windows
 
             SelectNear(FrameListView.Items.Count - 1);
 
+            Project.Persist();
             UpdateStatistics();
-            ShowHint("Hint.DeleteFrames", count);
+            ShowHint("S.Hint.DeleteFrames", false, count);
+        }
+
+        private void RemoveDuplicates_Executed(object sender, ExecutedRoutedEventArgs e)
+        {
+            Pause();
+            ShowPanel(PanelType.RemoveDuplicates, StringResource("Editor.Edit.Frames.Duplicates"), "Vector.RemoveImage", ApplyRemoveDuplicatesCountButton_Click);
+        }
+
+        private void ApplyRemoveDuplicatesCountButton_Click(object sender, RoutedEventArgs e)
+        {
+            Cursor = Cursors.AppStarting;
+
+            _removeDuplicatesDel = RemoveDuplicatesAsync;
+            _removeDuplicatesDel.BeginInvoke(UserSettings.All.DuplicatesSimilarity, UserSettings.All.DuplicatesRemoval, UserSettings.All.DuplicatesDelay, RemoveDuplicatesCallback, null);
+
+            ClosePanel();
         }
 
         private void Reduce_Executed(object sender, ExecutedRoutedEventArgs e)
@@ -1788,10 +2360,31 @@ namespace ScreenToGif.Windows
 
         private void ApplyReduceFrameCountButton_Click(object sender, RoutedEventArgs e)
         {
+            var selected = UserSettings.All.ReduceApplyToAll ? Util.Other.ListOfIndexes(0, Project.Frames.Count - 1) : SelectedFramesIndex();
+
+            if (selected.Count == 0)
+            {
+                StatusList.Warning(LocalizationHelper.Get("S.Reduce.Warning.NoSelection"));
+                return;
+            }
+
+            //Detects if there's any non-consecutive frames selected.
+            if (!selected.All(v => selected.Contains(v + 1) || v == selected.Last()))
+            {
+                StatusList.Warning(LocalizationHelper.Get("S.Reduce.Warning.NonConsecutive"));
+                return;
+            }
+
+            if (selected.Count <= UserSettings.All.ReduceFactor)
+            {
+                StatusList.Warning(LocalizationHelper.Get("S.Reduce.Warning.SmallerThanFactor"));
+                return;
+            }
+
             Cursor = Cursors.AppStarting;
 
             _reduceFrameDel = ReduceFrameCount;
-            _reduceFrameDel.BeginInvoke(ReduceFactorIntegerUpDown.Value, ReduceCountIntegerUpDown.Value, ReduceFrameCountCallback, null);
+            _reduceFrameDel.BeginInvoke(selected, UserSettings.All.ReduceFactor, UserSettings.All.ReduceCount, UserSettings.All.ReduceDelay, ReduceFrameCountCallback, null);
 
             ClosePanel();
         }
@@ -1802,8 +2395,7 @@ namespace ScreenToGif.Windows
 
         private void Reordering_CanExecute(object sender, CanExecuteRoutedEventArgs e)
         {
-            e.CanExecute = FrameListView != null && FrameListView.SelectedItem != null && !IsLoading &&
-            FrameListView.Items.Count > 1;
+            e.CanExecute = FrameListView?.SelectedItem != null && !IsLoading && FrameListView.Items.Count > 1;
         }
 
         private void Reverse_Executed(object sender, ExecutedRoutedEventArgs e)
@@ -1816,7 +2408,7 @@ namespace ScreenToGif.Windows
 
             LoadSelectedStarter(0);
 
-            ShowHint("Hint.Reverse");
+            ShowHint("S.Hint.Reverse");
         }
 
         private void Yoyo_Executed(object sender, ExecutedRoutedEventArgs e)
@@ -1828,7 +2420,7 @@ namespace ScreenToGif.Windows
             Project.Frames = Util.Other.Yoyo(Project.Frames);
             LoadSelectedStarter(0);
 
-            ShowHint("Hint.Yoyo");
+            ShowHint("S.Hint.Yoyo");
         }
 
         private void MoveLeft_Executed(object sender, ExecutedRoutedEventArgs e)
@@ -1896,7 +2488,7 @@ namespace ScreenToGif.Windows
 
             #endregion
 
-            ShowHint("Hint.MoveLeft");
+            ShowHint("S.Hint.MoveLeft");
 
             e.Handled = true;
         }
@@ -1967,7 +2559,7 @@ namespace ScreenToGif.Windows
 
             #endregion
 
-            ShowHint("Hint.MoveRight");
+            ShowHint("S.Hint.MoveRight");
 
             e.Handled = true;
         }
@@ -1988,8 +2580,8 @@ namespace ScreenToGif.Windows
 
             Cursor = Cursors.AppStarting;
 
-            _delayFramesDel = Delay;
-            _delayFramesDel.BeginInvoke(DelayChangeType.Override, NewDelayIntegerUpDown.Value, DelayCallback, null);
+            _delayFramesDel = DelayAsync;
+            _delayFramesDel.BeginInvoke(DelayModel.FromSettings(DelayUpdateType.Override), false, false, DelayCallback, null); //NewDelayIntegerUpDown.Value
 
             ClosePanel();
         }
@@ -2013,8 +2605,32 @@ namespace ScreenToGif.Windows
 
             Cursor = Cursors.AppStarting;
 
-            _delayFramesDel = Delay;
-            _delayFramesDel.BeginInvoke(DelayChangeType.IncreaseDecrease, IncreaseDecreaseDelayIntegerUpDown.Value, DelayCallback, null);
+            _delayFramesDel = DelayAsync;
+            _delayFramesDel.BeginInvoke(DelayModel.FromSettings(DelayUpdateType.IncreaseDecrease), false, false, DelayCallback, null); //IncreaseDecreaseDelayIntegerUpDown.Value
+
+            ClosePanel();
+        }
+
+        private void ScaleDelay_Executed(object sender, ExecutedRoutedEventArgs e)
+        {
+            Pause();
+            ShowPanel(PanelType.ScaleDelay, StringResource("Editor.Edit.Delay.Scale"), "Vector.ScaleDelay", ApplyScaleDelayButtonClick);
+        }
+
+        private void ApplyScaleDelayButtonClick(object sender, RoutedEventArgs e)
+        {
+            if (ScaleDelayIntegerUpDown.Value == 0 || ScaleDelayIntegerUpDown.Value == 100)
+            {
+                ClosePanel();
+                return;
+            }
+
+            ActionStack.SaveState(ActionStack.EditAction.Properties, Project.Frames, SelectedFramesIndex());
+
+            Cursor = Cursors.AppStarting;
+
+            _delayFramesDel = DelayAsync;
+            _delayFramesDel.BeginInvoke(DelayModel.FromSettings(DelayUpdateType.Scale), false, false, DelayCallback, null); //ScaleDelayIntegerUpDown.Value
 
             ClosePanel();
         }
@@ -2027,7 +2643,7 @@ namespace ScreenToGif.Windows
 
         private void Image_CanExecute(object sender, CanExecuteRoutedEventArgs e)
         {
-            e.CanExecute = FrameListView != null && FrameListView.SelectedItem != null && !IsLoading;
+            e.CanExecute = FrameListView?.SelectedItem != null && !IsLoading;
         }
 
         #region Size and Position
@@ -2040,18 +2656,18 @@ namespace ScreenToGif.Windows
             #region Info
 
             var image = Project.Frames[0].Path.SourceFrom();
-            CurrentDpiLabel.Content = DpiNumericUpDown.Value = (int)Math.Round(image.DpiX, MidpointRounding.AwayFromZero);
-            CurrentWidthLabel.Content = WidthResizeNumericUpDown.Value = (int)Math.Round(image.Width, MidpointRounding.AwayFromZero);
-            CurrentHeightLabel.Content = HeightResizeNumericUpDown.Value = (int)Math.Round(image.Height, MidpointRounding.AwayFromZero);
+            CurrentDpiRun.Text = (DpiNumericUpDown.Value = (int)Math.Round(image.DpiX, MidpointRounding.AwayFromZero)).ToString();
+            CurrentWidthRun.Text = (WidthResizeNumericUpDown.Value = image.PixelWidth).ToString();
+            CurrentHeightRun.Text = (HeightResizeNumericUpDown.Value = image.PixelHeight).ToString();
 
             #endregion
 
             #region Resize Attributes
 
-            var gcd = Util.Other.Gcd(image.Height, image.Width);
+            var gcd = Util.Other.Gcd(image.PixelHeight, image.PixelWidth);
 
-            _widthRatio = image.Width / gcd;
-            _heightRatio = image.Height / gcd;
+            _widthRatio = image.PixelWidth / gcd;
+            _heightRatio = image.PixelHeight / gcd;
 
             #endregion
 
@@ -2110,26 +2726,25 @@ namespace ScreenToGif.Windows
             Pause();
 
             //Checks with the non scaled size.
-            var size = Project.Frames[0].Path.NonScaledSize();
+            var size = Project.Frames[0].Path.ScaledSize();
 
             if (Math.Abs(size.Width - WidthResizeNumericUpDown.Value) < 0.1 && Math.Abs(size.Height - HeightResizeNumericUpDown.Value) < 0.1 &&
                 (int)Math.Round(Project.Frames[0].Path.DpiOf()) == DpiNumericUpDown.Value)
             {
-                EditorStatusBand.Warning(FindResource("Editor.Resize.Warning").ToString());
+                StatusList.Warning(FindResource("Editor.Resize.Warning").ToString());
                 return;
             }
 
-            ActionStack.SaveState(ActionStack.EditAction.ImageAndProperties, Project.Frames, Util.Other.CreateIndexList2(0, Project.Frames.Count));
+            ActionStack.SaveState(ActionStack.EditAction.ImageAndProperties, Project.Frames, Util.Other.ListOfIndexes(0, Project.Frames.Count));
 
             Cursor = Cursors.AppStarting;
 
             _resizeFramesDel = Resize;
-            _resizeFramesDel.BeginInvoke(WidthResizeNumericUpDown.Value, HeightResizeNumericUpDown.Value,
-                DpiNumericUpDown.Value, ResizeCallback, null);
+            _resizeFramesDel.BeginInvoke(WidthResizeNumericUpDown.Value, HeightResizeNumericUpDown.Value, DpiNumericUpDown.Value, ResizeCallback, null);
 
             ClosePanel();
 
-            ShowHint("Hint.Resize");
+            ShowHint("S.Hint.Resize");
         }
 
 
@@ -2146,11 +2761,9 @@ namespace ScreenToGif.Windows
         private void AddCropToElement(FrameworkElement fel)
         {
             if (_currentElement != null)
-            {
                 RemoveCropElements();
-            }
 
-            var rcInterior = new Rect(fel.Width * 0.2, fel.Height * 0.2, fel.Width * 0.6, fel.Height * 0.6);
+            var rcInterior = new Rect((int)(fel.Width * 0.2), (int)(fel.Height * 0.2), (int)(fel.Width * 0.6), (int)(fel.Height * 0.6));
 
             var aly = AdornerLayer.GetAdornerLayer(fel);
             _cropAdorner = new CroppingAdorner(fel, rcInterior);
@@ -2185,19 +2798,29 @@ namespace ScreenToGif.Windows
             RightCropNumericUpDown.Value = (int)_cropAdorner.ClipRectangle.Right;
 
             var scale = this.Scale();
-            CropSizeLabel.Content = $"{(int)Math.Round(_cropAdorner.ClipRectangle.Width * scale)} × {(int)Math.Round(_cropAdorner.ClipRectangle.Height * scale)}";
+            CropSizeTextBlock.Text = $"{(int)Math.Round(_cropAdorner.ClipRectangle.Width * scale)} × {(int)Math.Round(_cropAdorner.ClipRectangle.Height * scale)}";
 
             _resizing = false;
         }
 
         private void RefreshCropImage()
         {
-            if (_cropAdorner == null) return;
+            if (_cropAdorner == null || Math.Abs(ZoomBoxControl.Zoom - 1) > 0) return;
 
-            var rect = new Int32Rect((int)_cropAdorner.ClipRectangle.X, (int)_cropAdorner.ClipRectangle.Y, (int)_cropAdorner.ClipRectangle.Width, (int)_cropAdorner.ClipRectangle.Height);
+            try
+            {
+                var rect = new Int32Rect((int)(_cropAdorner.ClipRectangle.X * ZoomBoxControl.ScaleDiff),
+                    (int)(_cropAdorner.ClipRectangle.Y * ZoomBoxControl.ScaleDiff),
+                    (int)(_cropAdorner.ClipRectangle.Width * ZoomBoxControl.ScaleDiff),
+                    (int)(_cropAdorner.ClipRectangle.Height * ZoomBoxControl.ScaleDiff));
 
-            if (rect.HasArea)
-                CropImage.Source = Project.Frames[LastSelected].Path.CropFrom(rect);
+                if (rect.HasArea)
+                    CropImage.Source = (ZoomBoxControl.ImageSource ?? Project.Frames[LastSelected].Path).CropFrom(rect);
+            }
+            catch (Exception ex)
+            {
+                LogWriter.Log(ex, "Crop preview", _cropAdorner.ClipRectangle + " => " + FrameSize);
+            }
         }
 
         private void CropIntegerUpDown_ValueChanged(object sender, RoutedEventArgs e)
@@ -2219,17 +2842,32 @@ namespace ScreenToGif.Windows
         private void ApplyCropButton_Click(object sender, RoutedEventArgs e)
         {
             Pause();
+            RefreshCropImage();
 
-            var rect = new Int32Rect((int)Math.Round(_cropAdorner.ClipRectangle.X, MidpointRounding.AwayFromZero), (int)Math.Round(_cropAdorner.ClipRectangle.Y, MidpointRounding.AwayFromZero),
-                (int)Math.Round(_cropAdorner.ClipRectangle.Width), (int)Math.Round(_cropAdorner.ClipRectangle.Height));
+            var rect = new Int32Rect((int)Math.Round(_cropAdorner.ClipRectangle.X * ZoomBoxControl.ScaleDiff, MidpointRounding.AwayFromZero),
+                (int)Math.Round(_cropAdorner.ClipRectangle.Y * ZoomBoxControl.ScaleDiff, MidpointRounding.AwayFromZero),
+                (int)Math.Round(_cropAdorner.ClipRectangle.Width * ZoomBoxControl.ScaleDiff),
+                (int)Math.Round(_cropAdorner.ClipRectangle.Height * ZoomBoxControl.ScaleDiff));
 
             if (!rect.HasArea)
             {
-                EditorStatusBand.Warning(FindResource("Editor.Crop.Warning").ToString());
+                StatusList.Warning(FindResource("Editor.Crop.Warning").ToString());
                 return;
             }
 
-            ActionStack.SaveState(ActionStack.EditAction.ImageAndProperties, Project.Frames, Util.Other.CreateIndexList2(0, Project.Frames.Count));
+            if (rect.Width < 10 || rect.Height < 10)
+            {
+                StatusList.Warning(FindResource("Editor.Crop.Warning2").ToString());
+                return;
+            }
+
+            if (CropImage.Source == null)
+            {
+                StatusList.Warning(FindResource("Editor.Crop.Warning").ToString());
+                return;
+            }
+
+            ActionStack.SaveState(ActionStack.EditAction.ImageAndProperties, Project.Frames, Util.Other.ListOfIndexes(0, Project.Frames.Count));
 
             Cursor = Cursors.AppStarting;
 
@@ -2239,7 +2877,7 @@ namespace ScreenToGif.Windows
             RemoveCropElements();
             ClosePanel();
 
-            ShowHint("Hint.Crop");
+            ShowHint("S.Hint.Crop");
         }
 
 
@@ -2262,7 +2900,7 @@ namespace ScreenToGif.Windows
 
             //If it's a rotate operation, the entire list of frames will be altered.
             var selectedIndexes = type == FlipRotateType.RotateLeft90 || type == FlipRotateType.RotateRight90
-                ? Util.Other.CreateIndexList2(0, Project.Frames.Count)
+                ? Util.Other.ListOfIndexes(0, Project.Frames.Count)
                 : SelectedFramesIndex();
 
             ActionStack.SaveState(ActionStack.EditAction.ImageAndProperties, Project.Frames, selectedIndexes);
@@ -2272,7 +2910,7 @@ namespace ScreenToGif.Windows
 
             ClosePanel();
 
-            ShowHint("Hint.FlipRotate");
+            ShowHint("S.Hint.FlipRotate");
         }
 
         #endregion
@@ -2285,52 +2923,28 @@ namespace ScreenToGif.Windows
             ShowPanel(PanelType.Caption, StringResource("Editor.Image.Caption"), "Vector.Caption", ApplyCaptionButton_Click);
         }
 
-        private void CaptionFontColor_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            var colorPicker = new ColorSelector(UserSettings.All.CaptionFontColor) { Owner = this };
-            var result = colorPicker.ShowDialog();
-
-            if (result.HasValue && result.Value)
-            {
-                UserSettings.All.CaptionFontColor = colorPicker.SelectedColor;
-            }
-        }
-
-        private void CaptionOutlineColor_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            var colorPicker = new ColorSelector(UserSettings.All.CaptionOutlineColor) { Owner = this };
-            var result = colorPicker.ShowDialog();
-
-            if (result.HasValue && result.Value)
-            {
-                UserSettings.All.CaptionOutlineColor = colorPicker.SelectedColor;
-            }
-        }
-
         private void ApplyCaptionButton_Click(object sender, RoutedEventArgs e)
         {
-            if (CaptionTextBox.Text.Length == 0)
+            if (CaptionTextBox.Text.Trim().Length == 0)
             {
-                EditorStatusBand.Warning(FindResource("Editor.Caption.WarningNoText").ToString());
+                StatusList.Warning(LocalizationHelper.Get("Editor.Caption.WarningNoText"));
                 return;
             }
 
             if (FrameListView.SelectedIndex == -1)
             {
-                EditorStatusBand.Warning(FindResource("Editor.Caption.WarningSelection").ToString());
+                StatusList.Warning(LocalizationHelper.Get("Editor.Caption.WarningSelection"));
                 return;
             }
 
             ActionStack.SaveState(ActionStack.EditAction.ImageAndProperties, Project.Frames, SelectedFramesIndex());
 
-            var dpi = Project.Frames[0].Path.DpiOf();
-            var scaledSize = Project.Frames[0].Path.ScaledSize();
-            var render = CaptionOverlayGrid.GetRender(dpi, scaledSize);
+            var render = CaptionOverlayGrid.GetScaledRender(ZoomBoxControl.ScaleDiff, ZoomBoxControl.ImageDpi, ZoomBoxControl.GetImageSize());
 
             Cursor = Cursors.AppStarting;
 
-            _overlayFramesDel = Overlay;
-            _overlayFramesDel.BeginInvoke(render, dpi, false, OverlayCallback, null);
+            _overlayFramesDel = OverlayAsync;
+            _overlayFramesDel.BeginInvoke(render, ZoomBoxControl.ImageDpi, false, OverlayCallback, null);
 
             ClosePanel();
         }
@@ -2342,87 +2956,42 @@ namespace ScreenToGif.Windows
             ShowPanel(PanelType.FreeText, StringResource("Editor.Image.FreeText"), "Vector.FreeText", ApplyFreeTextButton_Click);
         }
 
-        private void FreeTextTextBlock_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        private void FreeTextTextBox_OnTextChanged(object sender, TextChangedEventArgs e)
         {
-            var element = sender as FrameworkElement;
+            if (!IsLoaded)
+                return;
 
-            if (element == null) return;
+            //TODO: This event is not fired when the entire text is deleted.
 
-            element.CaptureMouse();
-            e.Handled = true;
-        }
-
-        private void FreeTextTextBlock_OnMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
-        {
-            var element = sender as FrameworkElement;
-
-            if (element == null) return;
-
-            element.ReleaseMouseCapture();
-            e.Handled = true;
-        }
-
-        private void FreeTextTextBlock_OnMouseMove(object sender, MouseEventArgs e)
-        {
-            if (Mouse.Captured == null) return;
-            if (!Mouse.Captured.Equals(sender)) return;
-
-            var element = sender as FrameworkElement;
-
-            if (element == null) return;
-
-            var newPoint = e.GetPosition(FreeTextOverlayCanvas);
-
-            //Maximum axis -2000 to 2000.
-            if (newPoint.X > 2000)
-                newPoint.X = 2000;
-            if (newPoint.X < -2000)
-                newPoint.X = -2000;
-
-            if (newPoint.Y > 2000)
-                newPoint.Y = 2000;
-            if (newPoint.Y < -2000)
-                newPoint.Y = -2000;
-
-            Canvas.SetTop(element, newPoint.Y);
-            Canvas.SetLeft(element, newPoint.X);
-        }
-
-        private void FreeTextFontColor_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            var colorPicker = new ColorSelector(UserSettings.All.FreeTextFontColor) { Owner = this };
-            var result = colorPicker.ShowDialog();
-
-            if (result.HasValue && result.Value)
-            {
-                UserSettings.All.FreeTextFontColor = colorPicker.SelectedColor;
-            }
+            FreeTextOverlayControl.AdjustContent();
         }
 
         private void ApplyFreeTextButton_Click(object sender, RoutedEventArgs e)
         {
             if (FreeTextTextBox.Text.Length == 0)
             {
-                EditorStatusBand.Warning(FindResource("Editor.Caption.WarningNoText").ToString());
+                StatusList.Warning(FindResource("Editor.Caption.WarningNoText").ToString());
                 return;
             }
 
             if (FrameListView.SelectedIndex == -1)
             {
-                EditorStatusBand.Warning(FindResource("Editor.FreeText.WarningSelection").ToString());
+                StatusList.Warning(FindResource("Editor.FreeText.WarningSelection").ToString());
                 return;
             }
 
             ActionStack.SaveState(ActionStack.EditAction.ImageAndProperties, Project.Frames, SelectedFramesIndex());
 
-            var dpi = Project.Frames[0].Path.DpiOf();
-            var scaledSize = Project.Frames[0].Path.ScaledSize();
-            var render = FreeTextOverlayCanvas.GetRender(dpi, scaledSize);
+            FreeTextOverlayControl.CanMove = false;
+
+            var render = FreeTextOverlayControl.GetScaledRender(ZoomBoxControl.ScaleDiff, ZoomBoxControl.ImageDpi, ZoomBoxControl.GetImageSize());
+
+            FreeTextOverlayControl.CanMove = true;
 
             Cursor = Cursors.AppStarting;
 
-            _overlayFramesDel = Overlay;
-            _overlayFramesDel.BeginInvoke(render, dpi, false, OverlayCallback, null);
+            _overlayFramesDel = OverlayAsync;
+            _overlayFramesDel.BeginInvoke(render, ZoomBoxControl.ImageDpi, false, OverlayCallback, null);
 
             ClosePanel();
         }
@@ -2434,46 +3003,22 @@ namespace ScreenToGif.Windows
             ShowPanel(PanelType.TitleFrame, StringResource("Editor.Image.TitleFrame"), "Vector.TitleFrame", ApplyTitleFrameButton_Click);
         }
 
-        private void TitleFrameFontColor_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            var colorPicker = new ColorSelector(UserSettings.All.TitleFrameFontColor) { Owner = this };
-            var result = colorPicker.ShowDialog();
-
-            if (result.HasValue && result.Value)
-            {
-                UserSettings.All.TitleFrameFontColor = colorPicker.SelectedColor;
-            }
-        }
-
-        private void TitleFrameBackgroundColor_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            var colorPicker = new ColorSelector(UserSettings.All.TitleFrameBackgroundColor) { Owner = this };
-            var result = colorPicker.ShowDialog();
-
-            if (result.HasValue && result.Value)
-            {
-                UserSettings.All.TitleFrameBackgroundColor = colorPicker.SelectedColor;
-            }
-        }
-
         private void ApplyTitleFrameButton_Click(object sender, RoutedEventArgs e)
         {
             if (FrameListView.SelectedIndex == -1)
             {
-                EditorStatusBand.Warning(FindResource("Editor.TitleFrame.WarningSelection").ToString());
+                StatusList.Warning(FindResource("Editor.TitleFrame.WarningSelection").ToString());
                 return;
             }
 
             ActionStack.SaveState(ActionStack.EditAction.Add, FrameListView.SelectedIndex, 1);
 
-            var dpi = Project.Frames[0].Path.DpiOf();
-            var scaledSize = Project.Frames[0].Path.ScaledSize();
-            var render = TitleFrameOverlayGrid.GetRender(dpi, scaledSize);
+            var render = TitleFrameOverlayGrid.GetScaledRender(ZoomBoxControl.ScaleDiff, ZoomBoxControl.ImageDpi, ZoomBoxControl.GetImageSize());
 
             Cursor = Cursors.AppStarting;
 
             _titleFrameDel = TitleFrame;
-            _titleFrameDel.BeginInvoke(render, FrameListView.SelectedIndex, dpi, TitleFrameCallback, null);
+            _titleFrameDel.BeginInvoke(render, FrameListView.SelectedIndex, ZoomBoxControl.ImageDpi, TitleFrameCallback, null);
 
             ClosePanel();
         }
@@ -2487,63 +3032,36 @@ namespace ScreenToGif.Windows
 
         private void EditKeyStrokesButton_Click(object sender, RoutedEventArgs e)
         {
-            if (Project.Frames.All(x => x.KeyList.Any()))
-            {
-                EditorStatusBand.Warning(FindResource("KeyStrokes.Warning.None").ToString());
-                return;
-            }
-
             var keyStrokes = new KeyStrokes
             {
-                List = Project.Frames//.Select(x => x.KeyList)
+                InternalList = new ObservableCollection<FrameInfo>(Project.Frames.CopyList())
             };
 
-            keyStrokes.ShowDialog();
+            var result = keyStrokes.ShowDialog();
 
-            //TODO: Update the list of keystrokes.
-        }
+            if (!result.HasValue || !result.Value)
+                return;
 
-        private void KeyStrokesFontColor_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            var colorPicker = new ColorSelector(UserSettings.All.KeyStrokesFontColor) { Owner = this };
-            var result = colorPicker.ShowDialog();
+            ActionStack.SaveState(ActionStack.EditAction.Properties, Project.Frames, Util.Other.ListOfIndexes(0, Project.Frames.Count));
 
-            if (result.HasValue && result.Value)
-                UserSettings.All.KeyStrokesFontColor = colorPicker.SelectedColor;
-        }
-
-        private void KeyStrokesOutlineColor_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            var colorPicker = new ColorSelector(UserSettings.All.KeyStrokesOutlineColor) { Owner = this };
-            var result = colorPicker.ShowDialog();
-
-            if (result.HasValue && result.Value)
-                UserSettings.All.KeyStrokesOutlineColor = colorPicker.SelectedColor;
-        }
-
-        private void KeyStrokesBackgroundColor_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            var colorPicker = new ColorSelector(UserSettings.All.KeyStrokesBackgroundColor) { Owner = this };
-            var result = colorPicker.ShowDialog();
-
-            if (result.HasValue && result.Value)
-                UserSettings.All.KeyStrokesBackgroundColor = colorPicker.SelectedColor;
+            for (var i = 0; i < keyStrokes.InternalList.Count; i++)
+                Project.Frames[i].KeyList = new List<SimpleKeyGesture>(keyStrokes.InternalList[i].KeyList);
         }
 
         private void ApplyKeyStrokesButton_Click(object sender, RoutedEventArgs e)
         {
-            if (!Project.Frames.Any(x => x.KeyList.Any()))
+            if (!Project.Frames.Any(x => x.KeyList != null && x.KeyList.Any()))
             {
-                EditorStatusBand.Warning(FindResource("KeyStrokes.Warning.None").ToString());
+                StatusList.Warning(FindResource("KeyStrokes.Warning.None").ToString());
                 return;
             }
 
-            ActionStack.SaveState(ActionStack.EditAction.ImageAndProperties, Project.Frames, Util.Other.CreateIndexList2(0, Project.Frames.Count));
+            ActionStack.SaveState(ActionStack.EditAction.ImageAndProperties, Project.Frames, Util.Other.ListOfIndexes(0, Project.Frames.Count));
 
             Cursor = Cursors.AppStarting;
 
             _keyStrokesDelegate = KeyStrokesAsync;
-            _keyStrokesDelegate.BeginInvoke(KeyStrokesCallback, null);
+            _keyStrokesDelegate.BeginInvoke(KeyStrokesModel.FromSettings(), KeyStrokesCallback, null);
 
             ClosePanel();
         }
@@ -2558,43 +3076,132 @@ namespace ScreenToGif.Windows
             ShowPanel(PanelType.FreeDrawing, StringResource("Editor.Image.FreeDrawing"), "Vector.FreeDrawing", ApplyFreeDrawingButton_Click);
         }
 
-        private void FreeDrawingColorBorder_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            var colorPicker = new ColorSelector(UserSettings.All.FreeDrawingColor) { Owner = this };
-            var result = colorPicker.ShowDialog();
-
-            if (result.HasValue && result.Value)
-            {
-                UserSettings.All.FreeDrawingColor = colorPicker.SelectedColor;
-            }
-        }
-
         private void ApplyFreeDrawingButton_Click(object sender, RoutedEventArgs e)
         {
             if (FreeDrawingInkCanvas.Strokes.Count == 0)
             {
-                EditorStatusBand.Warning(FindResource("Editor.FreeDrawing.WarningNoDrawing").ToString());
+                StatusList.Warning(FindResource("Editor.FreeDrawing.WarningNoDrawing").ToString());
                 return;
             }
 
             if (FrameListView.SelectedIndex == -1)
             {
-                EditorStatusBand.Warning(FindResource("Editor.FreeDrawing.WarningSelection").ToString());
+                StatusList.Warning(FindResource("Editor.FreeDrawing.WarningSelection").ToString());
                 return;
             }
 
             ActionStack.SaveState(ActionStack.EditAction.ImageAndProperties, Project.Frames, SelectedFramesIndex());
 
-            var dpi = Project.Frames[0].Path.DpiOf();
-            var scaledSize = Project.Frames[0].Path.ScaledSize();
-            var render = FreeDrawingInkCanvas.GetRender(dpi, scaledSize);
+            var render = FreeDrawingInkCanvas.GetScaledRender(ZoomBoxControl.ScaleDiff, ZoomBoxControl.ImageDpi, ZoomBoxControl.GetImageSize());
 
             Cursor = Cursors.AppStarting;
 
             FreeDrawingInkCanvas.Strokes.Clear();
 
-            _overlayFramesDel = Overlay;
-            _overlayFramesDel.BeginInvoke(render, dpi, false, OverlayCallback, null);
+            _overlayFramesDel = OverlayAsync;
+            _overlayFramesDel.BeginInvoke(render, ZoomBoxControl.ImageDpi, false, OverlayCallback, null);
+
+            ClosePanel();
+        }
+
+
+        private void Shapes_Executed(object sender, ExecutedRoutedEventArgs e)
+        {
+            Pause();
+            ShowPanel(PanelType.Shapes, StringResource("Editor.Image.Shape"), "Vector.Ellipse", ApplyShapesButton_Click);
+        }
+
+        private void ShapeModes_Checked(object sender, RoutedEventArgs e)
+        {
+            ShapeDrawingCanvas.DrawingMode = AddModeRadioButton.IsChecked == true ? DrawingCanvas.DrawingModes.Shape : DrawingCanvas.DrawingModes.Select;
+        }
+
+        private void ShapeType_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            var listBox = sender as ListBox;
+
+            if (listBox == null)
+                return;
+
+            switch (listBox.SelectedIndex)
+            {
+                case 0:
+                    ShapeDrawingCanvas.CurrentShape = DrawingCanvas.Shapes.Rectangle;
+                    break;
+                case 1:
+                    ShapeDrawingCanvas.CurrentShape = DrawingCanvas.Shapes.Ellipse;
+                    break;
+                case 2:
+                    ShapeDrawingCanvas.CurrentShape = DrawingCanvas.Shapes.Triangle;
+                    break;
+                case 3:
+                    ShapeDrawingCanvas.CurrentShape = DrawingCanvas.Shapes.Arrow;
+                    break;
+            }
+        }
+
+        private void ShapeProperties_Changed(object sender, RoutedEventArgs e)
+        {
+            if (!IsLoaded)
+                return;
+
+            ShapeDrawingCanvas.StrokeThickness = ShapeOutlineDoubleUpDown.Value;
+            ShapeDrawingCanvas.Stroke = ShapeOutlineColorBox.SelectedBrush;
+            ShapeDrawingCanvas.Radius = ShapeRadiusDoubleUpDown.Value;
+            ShapeDrawingCanvas.Fill = ShapesFillColorBox.SelectedBrush;
+        }
+
+        private void ApplyShapesButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (ShapeDrawingCanvas.ShapesCount == 0)
+            {
+                StatusList.Warning(FindResource("Editor.FreeDrawing.WarningNoDrawing").ToString()); //TODO
+                return;
+            }
+
+            if (FrameListView.SelectedIndex == -1)
+            {
+                StatusList.Warning(FindResource("Editor.FreeDrawing.WarningSelection").ToString()); //TODO
+                return;
+            }
+
+            ShapeDrawingCanvas.DeselectAll();
+
+            ActionStack.SaveState(ActionStack.EditAction.ImageAndProperties, Project.Frames, SelectedFramesIndex());
+
+            var render = ShapeDrawingCanvas.GetScaledRender(ZoomBoxControl.ScaleDiff, ZoomBoxControl.ImageDpi, ZoomBoxControl.GetImageSize());
+
+            Cursor = Cursors.AppStarting;
+
+            ShapeDrawingCanvas.RemoveAllShapes();
+
+            _overlayFramesDel = OverlayAsync;
+            _overlayFramesDel.BeginInvoke(render, ZoomBoxControl.ImageDpi, false, OverlayCallback, null);
+
+            ClosePanel();
+        }
+
+
+        private void MouseClicks_Executed(object sender, ExecutedRoutedEventArgs e)
+        {
+            Pause();
+            ShowPanel(PanelType.MouseClicks, StringResource("Editor.Image.Clicks"), "Vector.Cursor", ApplyMouseClicksButton_Click);
+        }
+
+        private void ApplyMouseClicksButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!Project.Frames.Any(x => x.WasClicked))
+            {
+                StatusList.Warning(FindResource("S.MouseClicks.Warning.None").ToString());
+                return;
+            }
+
+            ActionStack.SaveState(ActionStack.EditAction.ImageAndProperties, Project.Frames, Util.Other.ListOfIndexes(0, Project.Frames.Count));
+
+            Cursor = Cursors.AppStarting;
+
+            _mouseClicksDelegate = MouseClicksAsync;
+            _mouseClicksDelegate.BeginInvoke(MouseClicksModel.FromSettings(), MouseClicksCallback, null);
 
             ClosePanel();
         }
@@ -2604,6 +3211,19 @@ namespace ScreenToGif.Windows
         {
             Pause();
             ShowPanel(PanelType.Watermark, StringResource("Editor.Image.Watermark"), "Vector.Watermark", ApplyWatermarkButton_Click);
+
+            TopWatermarkDoubleUpDown.Scale = LeftWatermarkDoubleUpDown.Scale = this.Scale();
+            TopWatermarkDoubleUpDown.Value = UserSettings.All.WatermarkTop;
+            LeftWatermarkDoubleUpDown.Value = UserSettings.All.WatermarkLeft;
+
+            if (string.IsNullOrEmpty(UserSettings.All.WatermarkFilePath))
+            {
+                if (TopWatermarkDoubleUpDown.Value < 0)
+                    TopWatermarkDoubleUpDown.Value = 0;
+
+                if (LeftWatermarkDoubleUpDown.Value < 0)
+                    LeftWatermarkDoubleUpDown.Value = 0;
+            }
         }
 
         private void SelectWatermark_Click(object sender, RoutedEventArgs e)
@@ -2612,56 +3232,47 @@ namespace ScreenToGif.Windows
             {
                 AddExtension = true,
                 CheckFileExists = true,
-                Title = StringResource("Editor.Watermark.Select"),
-                Filter = "Image (*.bmp, *.jpg, *.png)|*.bmp;*.jpg;*.png",
+                Title = LocalizationHelper.Get("Editor.Watermark.Select", true),
+                Filter = "Image (*.bmp, *.jpg, *.jpeg, *.png)|*.bmp;*.jpg;*.jpeg;*.png",
             };
 
             var result = ofd.ShowDialog();
 
-            if (result.HasValue && result.Value)
-            {
-                UserSettings.All.WatermarkFilePath = ofd.FileName;
-            }
-        }
+            if (!result.HasValue || !result.Value)
+                return;
 
-        private void WatermarkImage_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
-        {
-            #region Arrange
+            UserSettings.All.WatermarkFilePath = ofd.FileName;
+            UserSettings.All.WatermarkSize = 1;
 
-            if (UserSettings.All.WatermarkLeft + WatermarkImage.ActualWidth < 0)
-                UserSettings.All.WatermarkLeft = 0; //6 - (int)WatermarkImage.ActualWidth;
-
-            if (UserSettings.All.WatermarkLeft + 10 > CaptionOverlayGrid.Width)
-                UserSettings.All.WatermarkLeft = (int)CaptionOverlayGrid.Width - (int)WatermarkImage.ActualWidth;
-
-            if (UserSettings.All.WatermarkTop + WatermarkImage.ActualHeight < 0)
-                UserSettings.All.WatermarkTop = 0; //6 - (int)WatermarkImage.ActualHeight;
-
-            if (UserSettings.All.WatermarkTop + 10 > CaptionOverlayGrid.Height)
-                UserSettings.All.WatermarkTop = (int)CaptionOverlayGrid.Height - (int)WatermarkImage.ActualHeight;
-
-            #endregion
+            WatermarkOverlayCanvas.AdjustContent();
         }
 
         private void ApplyWatermarkButton_Click(object sender, RoutedEventArgs e)
         {
             if (string.IsNullOrEmpty(UserSettings.All.WatermarkFilePath) || !File.Exists(UserSettings.All.WatermarkFilePath))
             {
-                EditorStatusBand.Warning(FindResource("Editor.Watermark.WarningNoImage").ToString());
+                StatusList.Warning(FindResource("Editor.Watermark.WarningNoImage").ToString());
                 return;
             }
 
             if (FrameListView.SelectedIndex == -1)
             {
-                EditorStatusBand.Warning(FindResource("Editor.Watermark.WarningSelection").ToString());
+                StatusList.Warning(FindResource("Editor.Watermark.WarningSelection").ToString());
                 return;
             }
 
+            UserSettings.All.WatermarkTop = TopWatermarkDoubleUpDown.Value;
+            UserSettings.All.WatermarkLeft = LeftWatermarkDoubleUpDown.Value;
+
             ActionStack.SaveState(ActionStack.EditAction.ImageAndProperties, Project.Frames, SelectedFramesIndex());
 
-            var dpi = Project.Frames[0].Path.DpiOf();
-            var scaledSize = Project.Frames[0].Path.ScaledSize();
-            var render = WatermarkOverlayCanvas.GetRender(dpi, scaledSize);
+            WatermarkOverlayCanvas.CanMove = false;
+            WatermarkOverlayCanvas.CanResize = false;
+
+            var render = WatermarkOverlayCanvas.GetScaledRender(ZoomBoxControl.ScaleDiff, ZoomBoxControl.ImageDpi, ZoomBoxControl.GetImageSize());
+
+            WatermarkOverlayCanvas.CanMove = true;
+            WatermarkOverlayCanvas.CanResize = true;
 
             #region Remove adorners
 
@@ -2678,8 +3289,8 @@ namespace ScreenToGif.Windows
 
             Cursor = Cursors.AppStarting;
 
-            _overlayFramesDel = Overlay;
-            _overlayFramesDel.BeginInvoke(render, dpi, false, OverlayCallback, null);
+            _overlayFramesDel = OverlayAsync;
+            _overlayFramesDel.BeginInvoke(render, ZoomBoxControl.ImageDpi, false, OverlayCallback, null);
 
             ClosePanel();
         }
@@ -2691,41 +3302,154 @@ namespace ScreenToGif.Windows
             ShowPanel(PanelType.Border, StringResource("Editor.Image.Border"), "Vector.Border", ApplyBorderButton_Click);
         }
 
-        private void BorderColor_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        private void BorderProperties_ValueChanged(object sender, RoutedEventArgs e)
         {
-            var colorPicker = new ColorSelector(UserSettings.All.BorderColor) { Owner = this };
-            var result = colorPicker.ShowDialog();
-
-            if (result.HasValue && result.Value)
+            try
             {
-                UserSettings.All.BorderColor = colorPicker.SelectedColor;
+                if (CaptionOverlayGrid.Width < 0)
+                    return;
+
+                //Measure the border size.
+                var left = Math.Min(0, UserSettings.All.BorderLeftThickness);
+                var top = Math.Min(0, UserSettings.All.BorderTopThickness);
+                var right = Math.Min(0, UserSettings.All.BorderRightThickness);
+                var bottom = Math.Min(0, UserSettings.All.BorderBottomThickness);
+                var width = CaptionOverlayGrid.Width + Math.Abs(left) + +Math.Abs(right);
+                var height = CaptionOverlayGrid.Height + Math.Abs(top) + Math.Abs(bottom);
+
+                BorderBehindOverlayBorder.Width = width;
+                BorderBehindOverlayBorder.Height = height;
+                BorderPreviewGrid.Margin = new Thickness(left, top, right, bottom);
+            }
+            catch (Exception ex)
+            {
+                LogWriter.Log(ex, "Error while trying to measure dropshadow size.");
             }
         }
 
         private void ApplyBorderButton_Click(object sender, RoutedEventArgs e)
         {
-            if (BorderOverlayBorder.BorderThickness == new Thickness(0, 0, 0, 0))
+            var model = BorderModel.FromSettings();
+
+            if (Math.Abs(model.LeftThickness) < 0.001 && Math.Abs(model.TopThickness) < 0.001 && Math.Abs(model.RightThickness) < 0.001 && Math.Abs(model.BottomThickness) < 0.001)
             {
-                EditorStatusBand.Warning(FindResource("Editor.Border.WarningThickness").ToString());
+                StatusList.Warning(FindResource("Editor.Border.WarningThickness").ToString());
                 return;
             }
 
             if (FrameListView.SelectedIndex == -1)
             {
-                EditorStatusBand.Warning(FindResource("Editor.Border.WarningSelection").ToString());
+                StatusList.Warning(FindResource("Editor.Border.WarningSelection").ToString());
+                return;
+            }
+
+            if (model.LeftThickness < 0 || model.TopThickness < 0 || model.RightThickness < 0 || model.BottomThickness < 0)
+                ActionStack.SaveState(ActionStack.EditAction.ImageAndProperties, Project.Frames, Util.Other.ListOfIndexes(0, Project.Frames.Count));
+            else
+                ActionStack.SaveState(ActionStack.EditAction.ImageAndProperties, Project.Frames, SelectedFramesIndex());
+
+            Cursor = Cursors.AppStarting;
+
+            _borderDelegate = BorderAsync;
+            _borderDelegate.BeginInvoke(model, BorderCallback, null);
+
+            ClosePanel();
+        }
+
+
+        private void Shadow_Executed(object sender, ExecutedRoutedEventArgs e)
+        {
+            Pause();
+            ShowPanel(PanelType.Shadow, StringResource("Editor.Image.Shadow"), "Vector.Shadow", ApplyShadowButton_Click);
+        }
+
+        private void ShadowProperties_ValueChanged(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                if (CaptionOverlayGrid.Width < 0)
+                    return;
+
+                //Converts the direction in degrees to radians.
+                var radians = Math.PI / 180.0 * UserSettings.All.ShadowDirection;
+                var offsetX = UserSettings.All.ShadowDepth * Math.Cos(radians);
+                var offsetY = UserSettings.All.ShadowDepth * Math.Sin(radians);
+
+                //Each side can have a different offset based on the direction of the shadow.
+                var offsetLeft = offsetX < 0 ? offsetX * -1 : 0;
+                var offsetTop = offsetY > 0 ? offsetY : 0;
+                var offsetRight = offsetX > 0 ? offsetX : 0;
+                var offsetBottom = offsetY < 0 ? offsetY * -1 : 0;
+
+                //Measure drop shadow space.
+                var marginLeft = offsetLeft > 0 ? offsetLeft + UserSettings.All.ShadowBlurRadius / 2d : Math.Max(UserSettings.All.ShadowBlurRadius / 2d - offsetLeft, 0); //- offsetX
+                var marginTop = offsetTop > 0 ? offsetTop + UserSettings.All.ShadowBlurRadius / 2d : Math.Max(UserSettings.All.ShadowBlurRadius / 2d - offsetTop, 0); //- offsetY
+                var marginRight = offsetRight > 0 ? offsetRight + UserSettings.All.ShadowBlurRadius / 2d : Math.Max(UserSettings.All.ShadowBlurRadius / 2d + offsetRight, 0); //+ offsetX
+                var marginBottom = offsetBottom > 0 ? offsetBottom + UserSettings.All.ShadowBlurRadius / 2d : Math.Max(UserSettings.All.ShadowBlurRadius / 2d + offsetBottom, 0); //+ offsetY
+
+                ShadowPreviewGrid.Width = marginLeft + CaptionOverlayGrid.Width + marginRight;
+                ShadowPreviewGrid.Height = Math.Round(marginTop + CaptionOverlayGrid.Height + marginBottom, 0);
+
+                ShadowPreviewGrid.Margin = new Thickness(marginRight - marginLeft, marginBottom - marginTop, 0, 0);
+                ShadowInternalGrid.Margin = new Thickness(marginLeft, marginTop, marginRight, marginBottom);
+
+                ShadowInternalGrid.InvalidateVisual();
+                ShadowPreviewGrid.InvalidateVisual();
+                ShadowInternalGrid.InvalidateProperty(Grid.EffectProperty);
+            }
+            catch (Exception ex)
+            {
+                LogWriter.Log(ex, "Error while trying to measure dropshadow size for the previewer.");
+            }
+        }
+
+        private void ApplyShadowButton_Click(object sender, RoutedEventArgs e)
+        {
+            var model = ShadowModel.FromSettings();
+
+            if (Math.Abs(model.Depth) < 0.1 && Math.Abs(model.BlurRadius) < 0.1)
+            {
+                StatusList.Warning(LocalizationHelper.Get("Editor.Shadow.Warning.Behind"));
+                return;
+            }
+
+            if (Math.Abs(model.Opacity) < 0.1)
+            {
+                StatusList.Warning(LocalizationHelper.Get("Editor.Shadow.Warning.Invisible"));
+                return;
+            }
+
+            ActionStack.SaveState(ActionStack.EditAction.ImageAndProperties, Project.Frames, Util.Other.ListOfIndexes(0, Project.Frames.Count));
+
+            Cursor = Cursors.AppStarting;
+
+            _shadowDelegate = ShadowAsync;
+            _shadowDelegate.BeginInvoke(model, ShadowCallback, null);
+
+            ClosePanel();
+        }
+
+
+        private void Obfuscate_Executed(object sender, ExecutedRoutedEventArgs e)
+        {
+            Pause();
+            ShowPanel(PanelType.Obfuscate, StringResource("Editor.Image.Obfuscate"), "Vector.Obfuscate", ApplyObfuscateButton_Click);
+        }
+
+        private void ApplyObfuscateButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (ObfuscateOverlaySelectControl.Selected.IsEmpty)
+            {
+                StatusList.Warning(FindResource("S.Obfuscate.Warning").ToString());
                 return;
             }
 
             ActionStack.SaveState(ActionStack.EditAction.ImageAndProperties, Project.Frames, SelectedFramesIndex());
 
-            var dpi = Project.Frames[0].Path.DpiOf();
-            var scaledSize = Project.Frames[0].Path.ScaledSize();
-            var render = BorderOverlayBorder.GetRender(dpi, scaledSize);
-
             Cursor = Cursors.AppStarting;
 
-            _overlayFramesDel = Overlay;
-            _overlayFramesDel.BeginInvoke(render, dpi, false, OverlayCallback, null);
+            _obfuscateFramesDel = ObfuscateAsync;
+            _obfuscateFramesDel.BeginInvoke(ObfuscateOverlaySelectControl.Selected, UserSettings.All.PixelSize, UserSettings.All.UseMedian, ZoomBoxControl.ImageDpi, this.Scale(), false, ObfuscateCallback, null);
 
             ClosePanel();
         }
@@ -2741,14 +3465,11 @@ namespace ScreenToGif.Windows
         {
             if (CinemagraphInkCanvas.Strokes.Count == 0)
             {
-                EditorStatusBand.Warning(FindResource("Editor.Cinemagraph.WarningNoDrawing").ToString());
+                StatusList.Warning(FindResource("Editor.Cinemagraph.WarningNoDrawing").ToString());
                 return;
             }
 
-            ActionStack.SaveState(ActionStack.EditAction.ImageAndProperties, Project.Frames, Util.Other.CreateIndexList2(0, Project.Frames.Count));
-
-            var dpi = Project.Frames[0].Path.DpiOf();
-            var scaledSize = Project.Frames[0].Path.ScaledSize();
+            ActionStack.SaveState(ActionStack.EditAction.ImageAndProperties, Project.Frames, Util.Other.ListOfIndexes(0, Project.Frames.Count));
 
             #region Get the Strokes and Clip the Image
 
@@ -2769,17 +3490,30 @@ namespace ScreenToGif.Windows
                 Clip = geometry
             };
 
-            clippedImage.Measure(new Size(image.Width, image.Height)); //scaledSize
-            clippedImage.Arrange(new Rect(new Size(image.Width, image.Height))); //scaledSize
+            //OverlayGrid.Children.Add(clippedImage);
 
-            var imageRender = clippedImage.GetRender(dpi, scaledSize);
+            //var m = PresentationSource.FromVisual(this).CompositionTarget.TransformToDevice;
+
+            //var dpiTransform = new ScaleTransform(1 / m.M11, 1 / m.M22);
+            //if (dpiTransform.CanFreeze)
+            //    dpiTransform.Freeze();
+
+            //clippedImage.LayoutTransform = dpiTransform;
+
+            clippedImage.Measure(new Size(image.Width, image.Height)); //scaledSize
+            clippedImage.Arrange(new Rect(clippedImage.DesiredSize)); //scaledSize
+            //clippedImage.UpdateLayout();
+
+            var imageRender = clippedImage.GetScaledRender(ZoomBoxControl.ScaleDiff, ZoomBoxControl.ImageDpi, ZoomBoxControl.GetImageSize());
+
+            //OverlayGrid.Children.Remove(clippedImage);
 
             #endregion
 
             Cursor = Cursors.AppStarting;
 
-            _overlayFramesDel = Overlay;
-            _overlayFramesDel.BeginInvoke(imageRender, dpi, true, OverlayCallback, null);
+            _overlayFramesDel = OverlayAsync;
+            _overlayFramesDel.BeginInvoke(imageRender, ZoomBoxControl.ImageDpi, true, OverlayCallback, null);
 
             ClosePanel();
         }
@@ -2796,18 +3530,15 @@ namespace ScreenToGif.Windows
             ShowPanel(PanelType.Progress, StringResource("Editor.Image.Progress"), "Vector.Progress", ApplyProgressButton_Click);
         }
 
-        private void ProgressFontColor_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        private void ProgressPrecisionComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            var colorPicker = new ColorSelector(UserSettings.All.ProgressFontColor) { Owner = this };
-            var result = colorPicker.ShowDialog();
+            if (!IsLoaded || !ProgressGrid.IsVisible || TextRadioButton.IsChecked == false)
+                return;
 
-            if (result.HasValue && result.Value)
-            {
-                UserSettings.All.ProgressFontColor = colorPicker.SelectedColor;
-            }
+            ChangeProgressTextToCurrent();
         }
 
-        private void ProgressPrecisionComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void ExtendedCheckBox_CheckedChanged(object sender, RoutedEventArgs e)
         {
             if (!IsLoaded || !ProgressGrid.IsVisible || TextRadioButton.IsChecked == false)
                 return;
@@ -2823,14 +3554,15 @@ namespace ScreenToGif.Windows
             ChangeProgressTextToCurrent();
         }
 
-        private void ProgressColor_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        private void Hyperlink_RequestNavigate(object sender, System.Windows.Navigation.RequestNavigateEventArgs e)
         {
-            var colorPicker = new ColorSelector(UserSettings.All.ProgressColor) { Owner = this };
-            var result = colorPicker.ShowDialog();
-
-            if (result.HasValue && result.Value)
+            try
             {
-                UserSettings.All.ProgressColor = colorPicker.SelectedColor;
+                Process.Start(e.Uri.AbsoluteUri);
+            }
+            catch (Exception ex)
+            {
+                LogWriter.Log(ex, $"Error while trying to navigate to a given URI: '{e?.Uri?.AbsoluteUri}'.");
             }
         }
 
@@ -2838,10 +3570,10 @@ namespace ScreenToGif.Windows
         {
             Cursor = Cursors.AppStarting;
 
-            ActionStack.SaveState(ActionStack.EditAction.ImageAndProperties, Project.Frames, Util.Other.CreateIndexList2(0, Project.Frames.Count));
+            ActionStack.SaveState(ActionStack.EditAction.ImageAndProperties, Project.Frames, Util.Other.ListOfIndexes(0, Project.Frames.Count));
 
-            _progressDel = ProgressAsync;
-            _progressDel.BeginInvoke(ProgressCallback, null);
+            _progressDelegateDel = ProgressAsync;
+            _progressDelegateDel.BeginInvoke(ProgressModel.FromSettings(), ProgressCallback, null);
 
             ClosePanel();
         }
@@ -2863,22 +3595,17 @@ namespace ScreenToGif.Windows
             ShowPanel(PanelType.Fade, StringResource("Editor.Fade.Title"), "Vector.Fade", ApplyFadeButtonButton_Click);
         }
 
-        private void FadeToColor_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        {
-            var colorPicker = new ColorSelector(UserSettings.All.FadeToColor) { Owner = this };
-            var result = colorPicker.ShowDialog();
-
-            if (result.HasValue && result.Value)
-            {
-                UserSettings.All.FadeToColor = colorPicker.SelectedColor;
-            }
-        }
-
         private void ApplyFadeButtonButton_Click(object sender, RoutedEventArgs e)
         {
             if (FrameListView.SelectedIndex == -1)
             {
-                EditorStatusBand.Warning(FindResource("Editor.Fade.WarningSelection").ToString());
+                StatusList.Warning(FindResource("Editor.Fade.WarningSelection").ToString());
+                return;
+            }
+
+            if (UserSettings.All.FadeToType == FadeToType.Color && UserSettings.All.FadeToColor.A == 0)
+            {
+                StatusList.Warning(FindResource("Editor.Fade.WarningColor").ToString());
                 return;
             }
 
@@ -2903,13 +3630,13 @@ namespace ScreenToGif.Windows
         {
             if (FrameListView.SelectedIndex == -1)
             {
-                EditorStatusBand.Warning(FindResource("Editor.Slide.WarningSelection").ToString());
+                StatusList.Warning(FindResource("Editor.Slide.WarningSelection").ToString());
                 return;
             }
 
             Cursor = Cursors.AppStarting;
 
-            ActionStack.SaveState(ActionStack.EditAction.Add, FrameListView.SelectedIndex + 1, (int)FadeSlider.Value);
+            ActionStack.SaveState(ActionStack.EditAction.Add, FrameListView.SelectedIndex + 1, (int)SlideSlider.Value);
 
             _transitionDel = Slide;
             _transitionDel.BeginInvoke(FrameListView.SelectedIndex, (int)SlideSlider.Value, SlideFrom.Right, TransitionCallback, null);
@@ -2929,7 +3656,7 @@ namespace ScreenToGif.Windows
             if (!IsLoaded)
                 return;
 
-            e.CanExecute = _applyAction != null || ClipboardGrid.IsVisible;// && ActionGrid.Width > 50 && ActionLowerGrid.IsVisible;
+            e.CanExecute = _applyAction != null || ClipboardGrid.IsVisible || LoadRecentGrid.IsVisible;// && ActionGrid.Width > 50 && ActionLowerGrid.IsVisible;
         }
 
         private void Ok_Executed(object sender, ExecutedRoutedEventArgs e)
@@ -2939,7 +3666,7 @@ namespace ScreenToGif.Windows
             _applyAction?.Invoke(sender, e);
 
             //If the StatusBand started displaying the message, it means that the action failed.
-            if (!EditorStatusBand.Starting)
+            if (!StatusList.Children.OfType<StatusBand>().Any(a => a.Starting))
                 _applyAction = null;
         }
 
@@ -3023,12 +3750,17 @@ namespace ScreenToGif.Windows
 
             if (Project.Frames.Count - 1 == FrameListView.SelectedIndex)
             {
+                //If the playback should not loop, it will stop at the latest frame.
+                if (!UserSettings.All.LoopedPlayback)
+                {
+                    Pause();
+                    return;
+                }
+
                 FrameListView.SelectedIndex = 0;
             }
             else
-            {
                 FrameListView.SelectedIndex++;
-            }
 
             if (Project.Frames[FrameListView.SelectedIndex].Delay == 0)
                 Project.Frames[FrameListView.SelectedIndex].Delay = 10;
@@ -3060,26 +3792,26 @@ namespace ScreenToGif.Windows
 
             #region Validation
 
-            var extensionList = fileNames.Select(Path.GetExtension).ToList();
+            var extensionList = fileNames.Select(s => Path.GetExtension(s).ToLowerInvariant()).ToList();
 
-            var media = new[] { ".jpg", ".gif", ".bmp", ".png", ".avi", ".mp4", ".wmv" };
+            var media = new[] { ".jpg", ".jpeg", ".gif", ".bmp", ".png", ".avi", ".mp4", ".wmv" };
 
             var projectCount = extensionList.Count(x => !string.IsNullOrEmpty(x) && (x.Equals(".stg") || x.Equals(".zip")));
             var mediaCount = extensionList.Count(x => !string.IsNullOrEmpty(x) && media.Contains(Path.GetExtension(x)));
 
             if (projectCount != 0 && mediaCount != 0)
             {
-                Dialog.Ok(StringResource("Editor.DragDrop.InvalidFiles.Title"),
-                    StringResource("Editor.DragDrop.InvalidFiles.Instruction"),
-                    StringResource("Editor.DragDrop.InvalidFiles.Message"), Dialog.Icons.Warning);
+                Dialog.Ok(StringResource("Editor.DragDrop.Invalid.Title"),
+                    StringResource("Editor.DragDrop.MultipleFiles.Instruction"),
+                    StringResource("Editor.DragDrop.MultipleFiles.Message"), Icons.Warning);
                 return;
             }
 
             if (mediaCount == 0 && projectCount == 0)
             {
-                Dialog.Ok(StringResource("Editor.DragDrop.InvalidFiles.Title"),
-                    StringResource("Editor.DragDrop.InvalidFiles.Instruction"),
-                    StringResource("Editor.DragDrop.InvalidFiles.Message"), Dialog.Icons.Warning);
+                Dialog.Ok(StringResource("Editor.DragDrop.Invalid.Title"),
+                    StringResource("Editor.DragDrop.Invalid.Instruction"),
+                    StringResource("Editor.DragDrop.Invalid.Message"), Icons.Warning);
                 return;
             }
 
@@ -3106,9 +3838,26 @@ namespace ScreenToGif.Windows
             _importFramesDel.BeginInvoke(fileNames.ToList(), ImportFromCallback, null);
         }
 
+        private void CancelLoadingButton_Click(object sender, RoutedEventArgs e)
+        {
+            _abortLoading = true;
+            CancelLoadingButton.IsEnabled = false;
+        }
+
+        private void InkCanvas_PreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Escape || !(sender is InkCanvas canvas))
+                return;
+
+            //This event only exists because the InkPanel eats the Esc key used in Commands.
+            //if something is not selected, run the command to close the panel.
+            if (canvas.ActiveEditingMode != InkCanvasEditingMode.Select && canvas.GetSelectedStrokes().Any())
+                CancelCommandBinding.Command.Execute(null);
+        }
+
         #endregion
 
-        #region Private Methods
+        #region Methods
 
         #region Load
 
@@ -3121,10 +3870,11 @@ namespace ScreenToGif.Windows
         /// <summary>
         /// Loads the new frames and clears the old ones.
         /// </summary>
-        /// <param name="project">The project to load.</param>
+        /// <param name="newProject">The project to load.</param>
         /// <param name="isNew">True if this is a new project.</param>
         /// <param name="clear">True if should clear the current list of frames.</param>
-        private void LoadProject(ProjectInfo project, bool isNew = true, bool clear = true)
+        /// <param name="createFlag">True if it should create a flag for single use, a mutex.</param>
+        internal void LoadProject(ProjectInfo newProject, bool isNew = true, bool clear = true, bool createFlag = false)
         {
             Cursor = Cursors.AppStarting;
             IsLoading = true;
@@ -3134,23 +3884,46 @@ namespace ScreenToGif.Windows
 
             #region Discard
 
+            if (clear || isNew)
+            {
+                //Clear clipboard data.
+                ClipboardListBox.Items.Clear();
+                Util.Clipboard.Items?.Clear();
+            }
+
+            //TODO: Settings to choose if the project will be discarded.
             if (clear && Project != null && Project.Any)
             {
-                _discardFramesDel = Discard;
-                _discardFramesDel.BeginInvoke(Project, DiscardAndLoadCallback, null);
+                Project.Persist();
 
-                Project = project;
+                if (!UserSettings.All.NotifyProjectDiscard || Dialog.Ask(LocalizationHelper.Get("Editor.DiscardProject.Title"), LocalizationHelper.Get("Editor.DiscardPreviousProject.Instruction"),
+                        LocalizationHelper.Get("Editor.DiscardPreviousProject.Message"), false))
+                {
+                    _discardFramesDel = Discard;
+                    _discardFramesDel.BeginInvoke(Project, DiscardAndLoadCallback, null);
 
+                    Project = newProject;
+
+                    ActionStack.Clear();
+                    ActionStack.Project = Project;
+                    return;
+                }
+
+                Project.Clear();
                 ActionStack.Clear();
-                ActionStack.Project = Project;
-                return;
             }
 
             #endregion
 
             if (isNew)
             {
-                Project = project;
+                if (!clear) //Already clears the project above if flag 'clear' is true.
+                    Project?.Clear();
+
+                Project = newProject;
+
+                if (createFlag)
+                    Project.CreateMutex();
 
                 ActionStack.Clear();
                 ActionStack.Project = Project;
@@ -3164,66 +3937,283 @@ namespace ScreenToGif.Windows
         {
             try
             {
+                if (!Project.IsNew)
+                    Project.Persist();
+
+                var corruptedList = new List<FrameInfo>();
+                var count = 0;
+
+                #region Get images from cache
+
+                if (File.Exists(Project.CachePath))
+                {
+                    ShowProgress(DispatcherStringResource("Editor.RetrievingFromCache"), Project.Frames.Count);
+
+                    using (var fileStream = new FileStream(Project.CachePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                    {
+                        using (var deflateStream = new DeflateStream(fileStream, CompressionMode.Decompress))
+                        {
+                            var number = 0;
+
+                            foreach (var frame in Project.Frames)
+                            {
+                                if (_abortLoading)
+                                {
+                                    _abortLoading = false;
+                                    return false;
+                                }
+
+                                Dispatcher.Invoke(() => { UpdateProgress(number++); });
+                                BitmapSource source;
+
+                                try
+                                {
+                                    var array = deflateStream.ReadBytes((int)frame.DataLength);
+
+                                    if (Project.BitDepth == 24)
+                                    {
+                                        //24 bits: ((Project.Width * 24 + 31) / 32) * 4
+                                        source = BitmapSource.Create(Project.Width, Project.Height, Project.Dpi, Project.Dpi, PixelFormats.Bgr24, null, array, ((Project.Width * 24 + 31) / 32) * 4);
+                                        source = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
+                                    }
+                                    else
+                                    {
+                                        //32 bits: 4 * Project.Width
+                                        source = BitmapSource.Create(Project.Width, Project.Height, Project.Dpi, Project.Dpi, PixelFormats.Bgra32, null, array, 4 * Project.Width);
+                                    }
+                                }
+                                catch (EndOfStreamException d)
+                                {
+                                    LogWriter.Log(d, "It was not possible to read more bytes from the frame cache, since it reached the end");
+                                    break;
+                                }
+                                catch (Exception e)
+                                {
+                                    //Not possible to read!
+                                    throw;
+                                }
+
+                                using (var stream = new FileStream(frame.Path, FileMode.Create))
+                                {
+                                    var encoder = new PngBitmapEncoder();
+                                    encoder.Frames.Add(BitmapFrame.Create(source));
+                                    encoder.Save(stream);
+                                    stream.Close();
+                                }
+                            }
+
+                            GC.Collect();
+                        }
+                    }
+
+                    File.Delete(Project.CachePath);
+                }
+
+                #endregion
+
                 ShowProgress(DispatcherStringResource("Editor.LoadingFrames"), Project.Frames.Count);
 
-                Project.Persist();
-
-                var color = System.Drawing.Color.FromArgb(UserSettings.All.ClickColor.A, UserSettings.All.ClickColor.R,
-                    UserSettings.All.ClickColor.G, UserSettings.All.ClickColor.B);
+                #region Check if there's any missing frames (and remove them)
 
                 foreach (var frame in Project.Frames)
                 {
-                    #region Mouse Click
+                    if (_abortLoading)
+                        break;
 
-                    if (frame.WasClicked && UserSettings.All.DetectMouseClicks)
+                    if (!File.Exists(frame.Path))
+                        corruptedList.Add(frame);
+                }
+
+                if (_abortLoading)
+                {
+                    _abortLoading = false;
+                    return false;
+                }
+
+                //Remove the corrupted frames.
+                foreach (var frame in corruptedList)
+                    Project.Frames.Remove(frame);
+
+                if (Project.Frames.Count == 0)
+                {
+                    Dispatcher.InvokeAsync(() =>
                     {
-                        try
+                        Dialog.Ok(LocalizationHelper.Get("Editor.LoadingFrames"), LocalizationHelper.Get("Editor.LoadingFrames.ProjectCorrupted.Instruction"),
+                            LocalizationHelper.Get("Editor.LoadingFrames.ProjectCorrupted.Message"));
+                    });
+                    return false;
+                }
+
+                #endregion
+
+                //If the project was never loaded inside the editor. Projects created with any version older than 2.14 won't enter here.
+                if (Project.IsNew)
+                {
+                    Project.IsNew = false;
+                    Project.Persist();
+
+                    var tasks = UserSettings.All.AutomatedTasksList?.Cast<DefaultTaskModel>().ToList() ?? new List<DefaultTaskModel>();
+
+                    if (tasks.Any())
+                    {
+                        #region Initialize the previewer
+
+                        Dispatcher.Invoke(() =>
                         {
-                            using (var imageTemp = frame.Path.From())
+                            ZoomBoxControl.LoadFromPath(Project.Frames[0].Path);
+
+                            OverlayGrid.Visibility = Visibility.Visible;
+                            OverlayGrid.Opacity = 1;
+                            OverlayGrid.UpdateLayout();
+
+                            var size = ZoomBoxControl.GetElementSize();
+
+                            CaptionOverlayGrid.Width = size.Width;
+                            CaptionOverlayGrid.Height = size.Height;
+                            CaptionOverlayGrid.UpdateLayout();
+                        });
+
+                        #endregion
+
+                        foreach (var task in tasks)
+                        {
+                            if (_abortLoading)
                             {
-                                using (var graph = Graphics.FromImage(imageTemp))
+                                Dispatcher.Invoke(() =>
                                 {
-                                    var rectEllipse = new Rectangle(frame.CursorX - 6, frame.CursorY - 6, 12, 12);
+                                    ZoomBoxControl.ImageSource = null;
 
-                                    graph.DrawEllipse(new System.Drawing.Pen(new SolidBrush(System.Drawing.Color.FromArgb(120, color)), 12), rectEllipse);
-                                    graph.Flush();
+                                    OverlayGrid.Visibility = Visibility.Collapsed;
+                                    OverlayGrid.Opacity = 0;
+                                });
+
+                                _abortLoading = false;
+                                return false;
+                            }
+
+                            try
+                            {
+                                //TODO: Abort loading from inside the tasks too.
+                                switch (task.TaskType)
+                                {
+                                    case DefaultTaskModel.TaskTypeEnum.MouseClicks:
+                                    {
+                                        if (Project.CreatedBy == ProjectByType.ScreenRecorder)
+                                            MouseClicksAsync(task as MouseClicksModel ?? MouseClicksModel.FromSettings());
+
+                                        break;
+                                    }
+
+                                    case DefaultTaskModel.TaskTypeEnum.KeyStrokes:
+                                    {
+                                        if (Project.CreatedBy == ProjectByType.ScreenRecorder)
+                                            KeyStrokesAsync(task as KeyStrokesModel ?? KeyStrokesModel.FromSettings());
+
+                                        break;
+                                    }
+
+                                    case DefaultTaskModel.TaskTypeEnum.Delay:
+                                    {
+                                        if (Project.CreatedBy != ProjectByType.Editor && Project.CreatedBy != ProjectByType.Unknown)
+                                            DelayAsync(task as DelayModel ?? DelayModel.FromSettings(), true, true);
+
+                                        break;
+                                    }
+
+                                    case DefaultTaskModel.TaskTypeEnum.Progress:
+                                    {
+                                        if (Project.CreatedBy != ProjectByType.Editor && Project.CreatedBy != ProjectByType.Unknown)
+                                            ProgressAsync(task as ProgressModel ?? ProgressModel.FromSettings());
+
+                                        break;
+                                    }
+
+                                    case DefaultTaskModel.TaskTypeEnum.Border:
+                                    {
+                                        if (Project.CreatedBy != ProjectByType.Editor && Project.CreatedBy != ProjectByType.Unknown)
+                                            BorderAsync(task as BorderModel ?? BorderModel.FromSettings());
+
+                                        break;
+                                    }
+
+                                    case DefaultTaskModel.TaskTypeEnum.Shadow:
+                                    {
+                                        if (Project.CreatedBy != ProjectByType.Editor && Project.CreatedBy != ProjectByType.Unknown)
+                                            ShadowAsync(task as ShadowModel ?? ShadowModel.FromSettings());
+
+                                        break;
+                                    }
                                 }
-
-                                imageTemp.Save(frame.Path);
+                            }
+                            catch (Exception e)
+                            {
+                                LogWriter.Log(e, "Error while applying automatic task");
+                                Dispatcher.Invoke(() => { ExceptionDialog.Ok(e, "ScreenToGif", "Error while executing a task", e.Message); });
                             }
                         }
-                        catch (Exception) { }
 
-                        frame.WasClicked = false;
+                        #region Reset the previewer state
+
+                        Dispatcher.Invoke(() =>
+                        {
+                            ZoomBoxControl.ImageSource = null;
+
+                            OverlayGrid.Visibility = Visibility.Collapsed;
+                            OverlayGrid.Opacity = 0;
+                        });
+
+                        #endregion
                     }
+                }
 
-                    #endregion
+                #region Load frames into the ListView
 
-                    var itemInvoked = Dispatcher.Invoke(() =>
+                foreach (var frame in Project.Frames)
+                {
+                    if (_abortLoading)
+                        break;
+
+                    frame.Index = count++;
+
+                    Dispatcher.Invoke(() =>
                     {
                         var item = new FrameListBoxItem
                         {
-                            FrameNumber = Project.Frames.IndexOf(frame),
+                            FrameNumber = frame.Index,
                             Image = frame.Path,
                             Delay = frame.Delay
                         };
 
-                        return item;
-                    });
+                        FrameListView.Items.Add(item);
 
-                    Dispatcher.InvokeAsync(() =>
-                    {
-                        FrameListView.Items.Add(itemInvoked);
-
-                        UpdateProgress(itemInvoked.FrameNumber);
+                        UpdateProgress(item.FrameNumber);
                     });
                 }
+
+                if (_abortLoading)
+                {
+                    _abortLoading = false;
+                    return false;
+                }
+
+                if (corruptedList.Any())
+                {
+                    Dispatcher.InvokeAsync(() =>
+                    {
+                        Dialog.Ok(LocalizationHelper.Get("Editor.LoadingFrames"), LocalizationHelper.Get("Editor.LoadingFrames.FramesCorrupted.Instruction"),
+                            LocalizationHelper.Get("Editor.LoadingFrames.FramesCorrupted.Message"));
+                    });
+                }
+
+                #endregion
 
                 return true;
             }
             catch (Exception ex)
             {
                 LogWriter.Log(ex, "Frame Loading");
+                Dispatcher.Invoke(() => ErrorDialog.Ok(Title, "Error loading frames", "It was not possible to load all the frames.", ex));
+
                 return false;
             }
         }
@@ -3236,12 +4226,25 @@ namespace ScreenToGif.Windows
             {
                 Cursor = Cursors.Arrow;
                 IsLoading = false;
+                IsCancelable = false;
 
                 if (Project.Any)
                     FilledList = true;
 
-                ZoomBoxControl.Scale = Project.Frames[0].Path.ScaleOf();
-                FrameListView.SelectedIndex = 0;
+                if (!result)
+                {
+                    CancelLoadingButton.IsEnabled = true; //TODO: Is this right?
+
+                    _discardFramesDel = Discard;
+                    _discardFramesDel.BeginInvoke(Project, DiscardCallback, null);
+                    return;
+                }
+
+                FrameListView.SelectedIndex = -1;
+                FrameListView.SelectedIndex = 0; //TODO: Get the latest selected frame is it's the same project.
+                ZoomBoxControl.PixelSize = Project.Frames[0].Path.ScaledSize();
+                ZoomBoxControl.ImageScale = Project.Frames[0].Path.ScaleOf();
+                ZoomBoxControl.RefreshImage();
 
                 //ListBoxSelector.SetIsEnabled(FrameListView, true);
                 //new ListBoxSelector(FrameListView);
@@ -3249,11 +4252,19 @@ namespace ScreenToGif.Windows
                 HideProgress();
                 UpdateStatistics();
 
-                WelcomeGrid.BeginStoryboard(FindResource("HideWelcomeBorderStoryboard") as Storyboard, HandoffBehavior.Compose);
+                WelcomeGrid.BeginStoryboard(this.FindStoryboard("HideWelcomeBorderStoryboard"), HandoffBehavior.Compose);
 
                 CommandManager.InvalidateRequerySuggested();
 
                 SetFocusOnCurrentFrame();
+
+                //Adjust the window size based on the frame size.
+                if (UserSettings.All.AutomaticallySizeOnContent && SizeToContentCommand.Command != null && SizeToContentCommand.Command.CanExecute(null))
+                    SizeToContentCommand.Command.Execute(null);
+
+                //Adjust the frame zoom based on the window size.
+                if (UserSettings.All.AutomaticallyFitImage && FitImageCommand.Command != null && FitImageCommand.Command.CanExecute(null))
+                    FitImageCommand.Command.Execute(null);
             });
         }
 
@@ -3270,6 +4281,9 @@ namespace ScreenToGif.Windows
             Cursor = Cursors.AppStarting;
             IsLoading = true;
             ShowProgress(StringResource("Editor.UpdatingFrames"), Project.Frames.Count, true);
+
+            //Persists the project to the disk.
+            Task.Factory.StartNew(() => Project.Persist(), TaskCreationOptions.PreferFairness);
 
             _loadSelectedFramesDel = LoadSelected;
             _loadSelectedFramesDel.BeginInvoke(start, end, LoadSelectedCallback, null);
@@ -3303,6 +4317,8 @@ namespace ScreenToGif.Windows
                             frame.InvalidateVisual();
                         });
 
+                        Project.Frames[index].Index = index;
+
                         #endregion
                     }
                     else
@@ -3320,6 +4336,8 @@ namespace ScreenToGif.Windows
 
                             FrameListView.Items.Add(item);
                         });
+
+                        Project.Frames[index].Index = index;
 
                         #endregion
                     }
@@ -3356,9 +4374,17 @@ namespace ScreenToGif.Windows
                 if (LastSelected != -1)
                 {
                     ZoomBoxControl.ImageSource = null;
-                    ZoomBoxControl.ImageSource = Project.Frames[LastSelected].Path;
 
-                    FrameListView.ScrollIntoView(FrameListView.Items[LastSelected]);
+                    var valid = Project.ValidIndex(LastSelected);
+
+                    if (valid > -1)
+                    {
+                        ZoomBoxControl.ImageSource = Project.Frames[valid].Path;
+                        ZoomBoxControl.PixelSize = Project.Frames[0].Path.ScaledSize();
+                        ZoomBoxControl.ImageScale = Project.Frames[0].Path.ScaleOf();
+                        ZoomBoxControl.RefreshImage();
+                        FrameListView.ScrollIntoView(FrameListView.Items[valid]);
+                    }
                 }
 
                 UpdateStatistics();
@@ -3384,35 +4410,48 @@ namespace ScreenToGif.Windows
 
             try
             {
-                switch (fileName.Split('.').Last())
+                switch (fileName.Split('.').Last().ToLowerInvariant())
                 {
                     case "stg":
                     case "zip":
-
+                    {
                         listFrames = ImportFromProject(fileName, pathTemp);
                         break;
+                    }
 
                     case "gif":
-
+                    {
                         listFrames = ImportFromGif(fileName, pathTemp);
                         break;
+                    }
 
+                    case "avi":
+                    case "mkv":
                     case "mp4":
                     case "wmv":
-                    case "avi":
-
+                    case "webm":
+                    {
                         listFrames = ImportFromVideo(fileName, pathTemp);
                         break;
+                    }
+
+                    case "apng":
+                    case "png":
+                    {
+                        listFrames = ImportFromPng(fileName, pathTemp);
+                        break;
+                    }
 
                     default:
-
+                    {
                         listFrames = ImportFromImage(fileName, pathTemp);
                         break;
+                    }
                 }
             }
             catch (Exception ex)
             {
-                LogWriter.Log(ex, "Import Error");
+                LogWriter.Log(ex, "Import error");
 
                 return new List<FrameInfo>();
             }
@@ -3434,7 +4473,7 @@ namespace ScreenToGif.Windows
 
             ShowProgress(DispatcherStringResource("Editor.PreparingImport"), 100);
 
-            var project = new ProjectInfo().CreateProjectFolder();
+            var project = new ProjectInfo().CreateProjectFolder(ProjectByType.Editor);
 
             //Adds each image to a list.
             foreach (var file in fileList)
@@ -3476,6 +4515,13 @@ namespace ScreenToGif.Windows
         {
             _importFramesDel.EndInvoke(ar);
 
+            Dispatcher.Invoke(delegate
+            {
+                ClosePanel(removeEvent: true);
+
+                CommandManager.InvalidateRequerySuggested();
+            });
+
             GC.Collect();
         }
 
@@ -3493,11 +4539,24 @@ namespace ScreenToGif.Windows
 
             ShowProgress(DispatcherStringResource("Editor.PreparingImport"), 100);
 
-            var project = new ProjectInfo().CreateProjectFolder();
+            var project = new ProjectInfo().CreateProjectFolder(ProjectByType.Editor);
 
             //Adds each image to a list.
             foreach (var file in fileList)
                 project.Frames.AddRange(InsertInternal(file, project.FullPath) ?? new List<FrameInfo>());
+
+            if (!project.Any)
+            {
+                project.ReleaseMutex();
+
+                Dispatcher.Invoke(() =>
+                {
+                    Cursor = Cursors.Arrow;
+                    IsLoading = false;
+                });
+
+                return false;
+            }
 
             return Dispatcher.Invoke(() =>
             {
@@ -3506,6 +4565,8 @@ namespace ScreenToGif.Windows
                 //TODO: Treat multi-sized set of images...
                 var insert = new Insert(Project.Frames, project.Frames, FrameListView.SelectedIndex) { Owner = this };
                 var result = insert.ShowDialog();
+
+                project.ReleaseMutex();
 
                 if (result.HasValue && result.Value)
                 {
@@ -3516,20 +4577,28 @@ namespace ScreenToGif.Windows
 
                     return true;
                 }
-                else
+
+                HideProgress();
+
+                if (LastSelected != -1)
                 {
-                    HideProgress();
+                    ZoomBoxControl.ImageSource = null;
+                    ZoomBoxControl.ImageSource = Project.Frames[LastSelected].Path;
 
-                    if (LastSelected != -1)
-                    {
-                        ZoomBoxControl.ImageSource = null;
-                        ZoomBoxControl.ImageSource = Project.Frames[LastSelected].Path;
-
-                        FrameListView.ScrollIntoView(FrameListView.Items[LastSelected]);
-                    }
-
-                    return false;
+                    FrameListView.ScrollIntoView(FrameListView.Items[LastSelected]);
                 }
+
+                #region Enabled the UI
+
+                Dispatcher.Invoke(() =>
+                {
+                    Cursor = Cursors.Arrow;
+                    IsLoading = false;
+                });
+
+                #endregion
+
+                return false;
 
                 #endregion
             });
@@ -3546,6 +4615,9 @@ namespace ScreenToGif.Windows
                 {
                     Cursor = Cursors.Arrow;
                     IsLoading = false;
+                    HideProgress();
+
+                    ClosePanel(removeEvent: true);
 
                     FrameListView.Focus();
                     CommandManager.InvalidateRequerySuggested();
@@ -3554,12 +4626,12 @@ namespace ScreenToGif.Windows
 
         #endregion
 
-        private List<FrameInfo> ImportFromProject(string sourceFileName, string pathTemp)
+        private List<FrameInfo> ImportFromProject(string source, string pathTemp)
         {
             try
             {
                 //Extract to the folder of the newly created project.
-                ZipFile.ExtractToDirectory(sourceFileName, pathTemp);
+                ZipFile.ExtractToDirectory(source, pathTemp);
 
                 List<FrameInfo> list;
 
@@ -3606,41 +4678,109 @@ namespace ScreenToGif.Windows
             }
         }
 
-        private List<FrameInfo> ImportFromGif(string sourceFileName, string pathTemp)
+        private List<FrameInfo> ImportFromGif(string source, string pathTemp)
         {
             ShowProgress(DispatcherStringResource("Editor.ImportingFrames"), 50, true);
 
-            GifFile gifMetadata;
             var listFrames = new List<FrameInfo>();
 
-            var decoder = ImageMethods.GetDecoder(sourceFileName, out gifMetadata) as GifBitmapDecoder;
+            var decoder = ImageMethods.GetDecoder(source, out var gifMetadata) as GifBitmapDecoder;
 
             ShowProgress(DispatcherStringResource("Editor.ImportingFrames"), decoder.Frames.Count);
 
-            if (decoder.Frames.Count > 0)
+            if (decoder.Frames.Count <= 0)
+                return listFrames;
+
+            var fullSize = ImageMethods.GetFullSize(decoder, gifMetadata);
+            var index = 0;
+
+            BitmapSource baseFrame = null;
+            foreach (var rawFrame in decoder.Frames)
             {
-                var fullSize = ImageMethods.GetFullSize(decoder, gifMetadata);
-                var index = 0;
+                var metadata = ImageMethods.GetFrameMetadata(decoder, gifMetadata, index);
+
+                var bitmapSource = ImageMethods.MakeFrame(fullSize, rawFrame, metadata, baseFrame);
+
+                #region Disposal Method
+
+                switch (metadata.DisposalMethod)
+                {
+                    case FrameDisposalMethod.None:
+                    case FrameDisposalMethod.DoNotDispose:
+                        baseFrame = bitmapSource;
+                        break;
+                    case FrameDisposalMethod.RestoreBackground:
+                        baseFrame = ImageMethods.IsFullFrame(metadata, fullSize) ? null : ImageMethods.ClearArea(bitmapSource, metadata);
+                        break;
+                    case FrameDisposalMethod.RestorePrevious:
+                        //Reuse same base frame.
+                        break;
+                }
+
+                #endregion
+
+                #region Each Frame
+
+                var fileName = Path.Combine(pathTemp, $"{index} {DateTime.Now:hh-mm-ss-ffff}.png");
+
+                using (var stream = new FileStream(fileName, FileMode.Create))
+                {
+                    var encoder = new PngBitmapEncoder();
+                    encoder.Frames.Add(BitmapFrame.Create(bitmapSource));
+                    encoder.Save(stream);
+                    stream.Close();
+                }
+
+                //It should not throw a overflow exception because of the maximum value for the milliseconds.
+                var frame = new FrameInfo(fileName, (int)metadata.Delay.TotalMilliseconds);
+                listFrames.Add(frame);
+
+                UpdateProgress(index);
+
+                GC.Collect(1);
+
+                #endregion
+
+                index++;
+            }
+
+            return listFrames;
+        }
+
+        private List<FrameInfo> ImportFromPng(string source, string pathTemp)
+        {
+            ShowProgress(DispatcherStringResource("Editor.ImportingFrames"), 50, true);
+
+            using (var stream = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                var apng = new Apng(stream);
+                var success = apng.ReadFrames();
+
+                if (!success)
+                    return ImportFromImage(source, pathTemp);
+
+                var fullSize = new System.Drawing.Size((int)apng.Ihdr.Width, (int)apng.Ihdr.Height);
+                var list = new List<FrameInfo>();
 
                 BitmapSource baseFrame = null;
-                foreach (var rawFrame in decoder.Frames)
+                for (int index = 0; index < apng.Actl.NumFrames; index++)
                 {
-                    var metadata = ImageMethods.GetFrameMetadata(decoder, gifMetadata, index);
+                    var metadata = apng.GetFrame(index);
+                    var rawFrame = metadata.ImageData.SourceFrom();
 
-                    var bitmapSource = ImageMethods.MakeFrame(fullSize, rawFrame, metadata, baseFrame);
+                    var bitmapSource = Apng.MakeFrame(fullSize, rawFrame, metadata, baseFrame);
 
                     #region Disposal Method
 
-                    switch (metadata.DisposalMethod)
+                    switch (metadata.DisposeOp)
                     {
-                        case FrameDisposalMethod.None:
-                        case FrameDisposalMethod.DoNotDispose:
+                        case Apng.DisposeOps.None: //No disposal is done on this frame before rendering the next; the contents of the output buffer are left as is.
                             baseFrame = bitmapSource;
                             break;
-                        case FrameDisposalMethod.RestoreBackground:
-                            baseFrame = ImageMethods.IsFullFrame(metadata, fullSize) ? null : ImageMethods.ClearArea(bitmapSource, metadata);
+                        case Apng.DisposeOps.Background: //The frame's region of the output buffer is to be cleared to fully transparent black before rendering the next frame.
+                            baseFrame = baseFrame == null || Apng.IsFullFrame(metadata, fullSize) ? null : Apng.ClearArea(baseFrame, metadata);
                             break;
-                        case FrameDisposalMethod.RestorePrevious:
+                        case Apng.DisposeOps.Previous: //The frame's region of the output buffer is to be reverted to the previous contents before rendering the next frame.
                             //Reuse same base frame.
                             break;
                     }
@@ -3649,40 +4789,39 @@ namespace ScreenToGif.Windows
 
                     #region Each Frame
 
-                    var fileName = Path.Combine(pathTemp, $"{index} {DateTime.Now.ToString("hh-mm-ss-FFFF")}.png");
+                    var fileName = Path.Combine(pathTemp, $"{index} {DateTime.Now:hh-mm-ss-ffff}.png");
 
-                    using (var stream = new FileStream(fileName, FileMode.Create))
+                    using (var output = new FileStream(fileName, FileMode.Create))
                     {
                         var encoder = new PngBitmapEncoder();
                         encoder.Frames.Add(BitmapFrame.Create(bitmapSource));
-                        encoder.Save(stream);
+                        encoder.Save(output);
                         stream.Close();
                     }
 
-                    //It should not throw a overflow exception because of the maximum value for the milliseconds.
-                    var frame = new FrameInfo(fileName, (int)metadata.Delay.TotalMilliseconds);
-                    listFrames.Add(frame);
+                    list.Add(new FrameInfo(fileName, metadata.Delay));
 
                     UpdateProgress(index);
 
                     GC.Collect(1);
 
                     #endregion
-
-                    index++;
                 }
-            }
 
-            return listFrames;
+                return list;
+            }
         }
 
-        private List<FrameInfo> ImportFromImage(string sourceFileName, string pathTemp)
+        private List<FrameInfo> ImportFromImage(string source, string pathTemp)
         {
-            var fileName = Path.Combine(pathTemp, $"{0} {DateTime.Now.ToString("hh-mm-ss-FFFF")}.png");
+            var fileName = Path.Combine(pathTemp, $"{0} {DateTime.Now:hh-mm-ss-ffff}.png");
 
             #region Save the Image to the Recording Folder
 
-            var bitmap = new BitmapImage(new Uri(sourceFileName));
+            BitmapSource bitmap = new BitmapImage(new Uri(source));
+
+            if (bitmap.Format != PixelFormats.Bgra32)
+                bitmap = new FormatConvertedBitmap(bitmap, PixelFormats.Bgra32, null, 0);
 
             using (var stream = new FileStream(fileName, FileMode.Create))
             {
@@ -3699,59 +4838,21 @@ namespace ScreenToGif.Windows
             return new List<FrameInfo> { new FrameInfo(fileName, 66) };
         }
 
-        private List<FrameInfo> ImportFromVideo(string fileName, string pathTemp)
+        private List<FrameInfo> ImportFromVideo(string source, string pathTemp)
         {
-            var delay = 66;
-
-            var frameList = Dispatcher.Invoke(() =>
+            //Get frames from video.
+            return Dispatcher?.Invoke(() =>
             {
-                var videoSource = new VideoSource(fileName) { Owner = this };
-                var result = videoSource.ShowDialog();
-
-                delay = videoSource.Delay;
-
-                if (result.HasValue && result.Value)
-                    return videoSource.FrameList;
-
-                return null;
-            });
-
-            //return frameList ?? new List<FrameInfo>();
-
-            if (frameList == null)
-                return new List<FrameInfo>();
-
-            ShowProgress(DispatcherStringResource("Editor.ImportingFrames"), frameList.Count);
-
-            #region Saves the Frames to the Disk
-
-            var frameInfoList = new List<FrameInfo>();
-            var count = 0;
-
-            foreach (var frame in frameList)
-            {
-                var frameName = Path.Combine(pathTemp, $"{count} {DateTime.Now.ToString("hh-mm-ss-FFFF")}.png");
-
-                using (var stream = new FileStream(frameName, FileMode.Create))
+                var vid = new VideoSource
                 {
-                    var encoder = new PngBitmapEncoder();
-                    encoder.Frames.Add(frame);
-                    encoder.Save(stream);
-                    stream.Close();
-                }
+                    RootFolder = pathTemp,
+                    VideoPath = source,
+                    Owner = this
+                };
+                var result = vid.ShowDialog();
 
-                var frameInfo = new FrameInfo(frameName, delay);
-                frameInfoList.Add(frameInfo);
-
-                GC.Collect();
-                count++;
-
-                UpdateProgress(count);
-            }
-
-            #endregion
-
-            return frameInfoList;
+                return result.HasValue && result.Value ? vid.Frames : null;
+            });
         }
 
         #endregion
@@ -3774,6 +4875,7 @@ namespace ScreenToGif.Windows
                 PlayMenuItem.Image = (Canvas)FindResource("Vector.Play");
 
                 SetFocusOnCurrentFrame();
+                UpdateOtherStatistics();
             }
             else
             {
@@ -3824,6 +4926,7 @@ namespace ScreenToGif.Windows
             PlayMenuItem.Image = (Canvas)FindResource("Vector.Play");
 
             SetFocusOnCurrentFrame();
+            UpdateOtherStatistics();
         }
 
         #endregion
@@ -3860,7 +4963,7 @@ namespace ScreenToGif.Windows
         {
             Dispatcher.Invoke(() =>
             {
-                StatusGrid.Visibility = Visibility.Hidden;
+                StatusGrid.Visibility = Visibility.Collapsed;
                 TaskbarItemInfo.ProgressState = TaskbarItemProgressState.None;
             });
         }
@@ -3885,36 +4988,42 @@ namespace ScreenToGif.Windows
         {
             for (var index = startIndex; index < FrameListView.Items.Count; index++)
             {
+                Project.Frames[index].Index = index;
                 ((FrameListBoxItem)FrameListView.Items[index]).FrameNumber = index;
             }
         }
 
         private void ShowPanel(PanelType type, string title, string vector, Action<object, RoutedEventArgs> apply = null)
         {
+            var focusFirstVisibleChild = true;
+
             #region Hide all visible grids
 
             foreach (var child in ActionInternalGrid.Children.OfType<Grid>().Where(x => x.Visibility == Visibility.Visible))
-            {
                 child.Visibility = Visibility.Collapsed;
-            }
+
+            ShapeDrawingCanvas.DeselectAll();
 
             #endregion
 
             #region Overlay
 
-            //TODO: Better
-            if (Project != null && Project.Any)
+            ZoomBoxControl.SaveCurrentZoom();
+
+            if (Project != null && Project.Any && type < 0)
             {
-                var image = Project.Frames[0].Path.SourceFrom();
-                CaptionOverlayGrid.Width = image.Width;
-                CaptionOverlayGrid.Height = image.Height;
+                ZoomBoxControl.Zoom = 1.0;
+                var size = ZoomBoxControl.GetElementSize();
+
+                CaptionOverlayGrid.Width = size.Width;
+                CaptionOverlayGrid.Height = size.Height;
             }
 
             #endregion
 
             #region Commons
 
-            ActionTitleLabel.Content = title;
+            ActionTitleTextBlock.Text = title;
             ActionViewBox.Child = FindResource(vector) as Canvas;
 
             Util.Other.RemoveRoutedEventHandlers(ApplyButton, ButtonBase.ClickEvent);
@@ -3932,32 +5041,49 @@ namespace ScreenToGif.Windows
                 ActionLowerGrid.Visibility = Visibility.Collapsed;
             }
 
-            RemoveAdorners();
-
             #endregion
 
             #region Type
 
             switch (type)
             {
+                case PanelType.NewAnimation:
+                    NewGrid.Visibility = Visibility.Visible;
+                    break;
                 case PanelType.SaveAs:
                     ApplyButton.Text = StringResource("Action.Save");
                     ApplyButton.Content = FindResource("Vector.Save") as Canvas;
+
+                    //Change the preset selection.
+                    UpdateFfmpegPresetsList();
+                    SelectDefaultFfmpegPreset();
+
                     SaveGrid.Visibility = Visibility.Visible;
+
+                    // Focus the filename text box instead of automatically 
+                    // focusing the first child control in the panel.
+                    FocusSaveAsFilenameTextBox();
+                    focusFirstVisibleChild = false;
                     break;
-                case PanelType.NewAnimation:
-                    NewGrid.Visibility = Visibility.Visible;
+                case PanelType.LoadRecent:
+                    ApplyButton.Text = StringResource("Action.Open");
+                    ApplyButton.Content = FindResource("Vector.Open") as Canvas;
+                    LoadRecentGrid.Visibility = Visibility.Visible;
+
+                    //Load list.
+                    _loadRecentDel = LoadRecentAsync;
+                    _loadRecentDel.BeginInvoke(LoadRecentCallback, null);
                     break;
                 case PanelType.Clipboard:
                     ClipboardGrid.Visibility = Visibility.Visible;
                     break;
                 case PanelType.Resize:
                     ResizeGrid.Visibility = Visibility.Visible;
-                    ShowHint("Hint.ApplyAll");
+                    ShowHint("S.Hint.ApplyAll", true);
                     break;
                 case PanelType.FlipRotate:
                     FlipRotateGrid.Visibility = Visibility.Visible;
-                    ShowHint("Hint.FlipRotate2");
+                    ShowHint("S.Hint.FlipRotate2", true);
                     break;
                 case PanelType.Crop:
 
@@ -3966,7 +5092,6 @@ namespace ScreenToGif.Windows
                     CropGrid.Visibility = Visibility.Visible;
 
                     AddCropToElement(CropAreaGrid);
-                    RefreshCropImage();
 
                     BottomCropNumericUpDown.Scale = TopCropNumericUpDown.Scale = RightCropNumericUpDown.Scale = LeftCropNumericUpDown.Scale = this.Scale();
 
@@ -3976,98 +5101,121 @@ namespace ScreenToGif.Windows
                     RightCropNumericUpDown.Value = (int)(CaptionOverlayGrid.Width - (CaptionOverlayGrid.Width * .1));
                     LeftCropNumericUpDown.Value = (int)(CaptionOverlayGrid.Width * .1);
 
-                    ShowHint("Hint.ApplyAll");
+                    ShowHint("S.Hint.ApplyAll", true);
 
                     #endregion
 
                     break;
                 case PanelType.Caption:
                     CaptionGrid.Visibility = Visibility.Visible;
-                    ShowHint("Hint.ApplySelected");
+                    ShowHint("S.Hint.ApplySelected", true);
                     break;
                 case PanelType.FreeText:
                     FreeTextGrid.Visibility = Visibility.Visible;
-                    ShowHint("Hint.ApplySelected");
+                    ShowHint("S.Hint.ApplySelected", true);
                     break;
                 case PanelType.TitleFrame:
                     TitleFrameGrid.Visibility = Visibility.Visible;
-                    ShowHint("Hint.TitleFrame2");
+                    ShowHint("S.Hint.TitleFrame2", true);
                     break;
                 case PanelType.KeyStrokes:
-                    KeyStrokesLabel.MinHeight = 0;
-                    KeyStrokesLabel.Text = "Ctrl + c";
+                    KeyStrokesLabel.Text = "Ctrl + C";
                     KeyStrokesGrid.Visibility = Visibility.Visible;
-                    ShowHint("Hint.ApplyAll");
+                    ShowHint("S.Hint.ApplyAll", true);
                     break;
                 case PanelType.FreeDrawing:
                     FreeDrawingGrid.Visibility = Visibility.Visible;
-                    ShowHint("Hint.ApplySelected");
+                    ShowHint("S.Hint.ApplySelected", true);
+                    break;
+                case PanelType.Shapes:
+                    ShapesGrid.Visibility = Visibility.Visible;
+                    ShowHint("S.Hint.ApplySelected", true);
+
+                    ShapeProperties_Changed(this, null);
+                    ShapeType_SelectionChanged(ShapesListBox, null);
                     break;
                 case PanelType.Watermark:
 
                     #region Watermark
 
-                    var adornerLayer = AdornerLayer.GetAdornerLayer(WatermarkImage);
+                    //#region Arrange
 
-                    adornerLayer.Add(new ResizingAdorner(WatermarkImage));
+                    //if (UserSettings.All.WatermarkLeft < 0)
+                    //    UserSettings.All.WatermarkLeft = 10;
 
-                    TopWatermarkIntegerUpDown.Scale = LeftWatermarkIntegerUpDown.Scale = this.Scale();
+                    //if (UserSettings.All.WatermarkLeft + 10 > CaptionOverlayGrid.Width)
+                    //    UserSettings.All.WatermarkLeft = 10;
 
-                    #region Arrange
+                    //if (UserSettings.All.WatermarkTop < 0)
+                    //    UserSettings.All.WatermarkTop = 10;
 
-                    if (UserSettings.All.WatermarkLeft < 0)
-                        UserSettings.All.WatermarkLeft = 10;
+                    //if (UserSettings.All.WatermarkTop + 10 > CaptionOverlayGrid.Height)
+                    //    UserSettings.All.WatermarkTop = 10;
 
-                    if (UserSettings.All.WatermarkLeft + 10 > CaptionOverlayGrid.Width)
-                        UserSettings.All.WatermarkLeft = 10;
-
-                    if (UserSettings.All.WatermarkTop < 0)
-                        UserSettings.All.WatermarkTop = 10;
-
-                    if (UserSettings.All.WatermarkTop + 10 > CaptionOverlayGrid.Height)
-                        UserSettings.All.WatermarkTop = 10;
-
-                    #endregion
+                    //#endregion
 
                     WatermarkGrid.Visibility = Visibility.Visible;
-                    ShowHint("Hint.ApplySelected");
+                    ShowHint("S.Hint.ApplySelected", true);
 
                     #endregion
 
                     break;
                 case PanelType.Border:
+                    BorderProperties_ValueChanged(null, null);
                     BorderGrid.Visibility = Visibility.Visible;
-                    ShowHint("Hint.ApplySelected");
+                    ShowHint("S.Hint.ApplySelectedOrAll", true);
+                    break;
+                case PanelType.Obfuscate:
+                    ObfuscateOverlaySelectControl.Scale = this.Scale();
+                    ObfuscateOverlaySelectControl.Retry();
+                    ObfuscateGrid.Visibility = Visibility.Visible;
+                    ShowHint("S.Hint.ApplySelected", true);
                     break;
                 case PanelType.Progress:
                     ProgressGrid.Visibility = Visibility.Visible;
-
                     ChangeProgressTextToCurrent();
-                    ShowHint("Hint.ApplyAll");
+                    ShowHint("S.Hint.ApplyAll", true);
+                    break;
+                case PanelType.Shadow:
+                    ShadowProperties_ValueChanged(null, null);
+                    ShadowGrid.Visibility = Visibility.Visible;
+                    ShowHint("S.Hint.ApplyAll", true);
                     break;
                 case PanelType.OverrideDelay:
                     OverrideDelayGrid.Visibility = Visibility.Visible;
-                    ShowHint("Hint.ApplySelected");
+                    ShowHint("S.Hint.ApplySelected", true);
                     break;
                 case PanelType.IncreaseDecreaseDelay:
                     IncreaseDecreaseDelayGrid.Visibility = Visibility.Visible;
-                    ShowHint("Hint.ApplySelected");
+                    ShowHint("S.Hint.ApplySelected", true);
+                    break;
+                case PanelType.ScaleDelay:
+                    ScaleDelayGrid.Visibility = Visibility.Visible;
+                    ShowHint("S.Hint.ApplySelected", true);
                     break;
                 case PanelType.Cinemagraph:
                     CinemagraphGrid.Visibility = Visibility.Visible;
-                    ShowHint("Hint.Cinemagraph");
+                    ShowHint("S.Hint.Cinemagraph", true);
                     break;
                 case PanelType.Fade:
                     FadeGrid.Visibility = Visibility.Visible;
-                    ShowHint("Transitions.Info");
+                    ShowHint("Transitions.Info", true);
                     break;
                 case PanelType.Slide:
                     SlideGrid.Visibility = Visibility.Visible;
-                    ShowHint("Transitions.Info");
+                    ShowHint("Transitions.Info", true);
                     break;
                 case PanelType.ReduceFrames:
                     ReduceGrid.Visibility = Visibility.Visible;
-                    ShowHint("Hint.ApplyAll");
+                    ShowHint("S.Hint.ApplySelectedOrAll", true);
+                    break;
+                case PanelType.RemoveDuplicates:
+                    RemoveDuplicatesGrid.Visibility = Visibility.Visible;
+                    ShowHint("S.Hint.ApplyAll", true);
+                    break;
+                case PanelType.MouseClicks:
+                    MouseClicksGrid.Visibility = Visibility.Visible;
+                    ShowHint("S.Hint.ApplyAll", true);
                     break;
             }
 
@@ -4075,54 +5223,66 @@ namespace ScreenToGif.Windows
 
             #region Focus
 
-            var visible = ActionInternalGrid.Children.OfType<Grid>().FirstOrDefault(x => x.Visibility == Visibility.Visible);
-
-            if (visible != null)
+            if (focusFirstVisibleChild)
             {
-                visible.Focus();
-                visible.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+                var visible = ActionInternalGrid.Children.OfType<Grid>().FirstOrDefault(x => x.Visibility == Visibility.Visible);
+
+                if (visible != null)
+                {
+                    visible.Focus();
+                    visible.MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+                }
             }
 
             #endregion
 
             #region Animate
 
-            if (type == PanelType.SaveAs && ActionGrid.Width < 280)
-            {
-                ActionGrid.BeginStoryboard(FindResource("ShowExtendedPanelStoryboard") as Storyboard, HandoffBehavior.Compose);
-            }
-            else if (type != PanelType.SaveAs && (ActionGrid.Width < 5 || ActionGrid.Width > 240))
-            {
-                ActionGrid.BeginStoryboard(FindResource("ShowPanelStoryboard") as Storyboard, HandoffBehavior.Compose);
-            }
+            if ((type == PanelType.SaveAs || type == PanelType.LoadRecent) && ActionGrid.Width < 300)
+                ActionGrid.BeginStoryboard(this.FindStoryboard("ShowExtendedPanelStoryboard"), HandoffBehavior.Compose);
+            else if (type != PanelType.SaveAs && type != PanelType.LoadRecent && (ActionGrid.Width < 5 || ActionGrid.Width > 280))
+                ActionGrid.BeginStoryboard(this.FindStoryboard("ShowPanelStoryboard"), HandoffBehavior.Compose);
 
             #endregion
 
             #region Overlay Grid
 
             if (OverlayGrid.Opacity < 1 && type < 0)
-            {
-                OverlayGrid.BeginStoryboard(FindResource("ShowOverlayGridStoryboard") as Storyboard, HandoffBehavior.Compose);
-                ZoomBoxControl.Zoom = 1.0;
-            }
+                OverlayGrid.BeginStoryboard(this.FindStoryboard("ShowOverlayGridStoryboard"), HandoffBehavior.Compose);
             else if (OverlayGrid.Opacity > 0 && type > 0)
-                OverlayGrid.BeginStoryboard(FindResource("HideOverlayGridStoryboard") as Storyboard, HandoffBehavior.Compose);
+                OverlayGrid.BeginStoryboard(this.FindStoryboard("HideOverlayGridStoryboard"), HandoffBehavior.Compose);
 
             #endregion
 
             CommandManager.InvalidateRequerySuggested();
         }
 
-        private void ClosePanel(bool isCancel = false)
+        private void FocusSaveAsFilenameTextBox()
         {
-            EditorStatusBand.Hide();
-            RemoveAdorners();
+            //Find the first visible filename text box and select it.
+            var box = new [] { OutputFilenameTextBox, OutputApngFilenameTextBox, OutputVideoFilenameTextBox, OutputImagesFilenameTextBox,
+                OutputProjectFilenameTextBox, OutputPsdFilenameTextBox }.FirstOrDefault(x => x.Visibility == Visibility.Visible);
+
+            box?.Focus();
+        }
+
+        private void ClosePanel(bool isCancel = false, bool removeEvent = false)
+        {
+            StatusList.Remove(StatusType.Warning);
+
+            if (ActionGrid.ActualWidth > 0)
+                ZoomBoxControl.RestoreSavedZoom();
+
+            HideHint();
 
             if (isCancel)
                 SetFocusOnCurrentFrame();
 
-            BeginStoryboard(FindStoryboard("HidePanelStoryboard"), HandoffBehavior.Compose);
-            BeginStoryboard(FindStoryboard("HideOverlayGridStoryboard"), HandoffBehavior.Compose);
+            if (removeEvent)
+                _applyAction = null;
+
+            BeginStoryboard(this.FindStoryboard("HidePanelStoryboard"), HandoffBehavior.Compose);
+            BeginStoryboard(this.FindStoryboard("HideOverlayGridStoryboard"), HandoffBehavior.Compose);
         }
 
         private List<int> SelectedFramesIndex()
@@ -4130,63 +5290,977 @@ namespace ScreenToGif.Windows
             return FrameListView.SelectedItems.OfType<FrameListBoxItem>().Select(x => FrameListView.Items.IndexOf(x)).OrderBy(y => y).ToList();
         }
 
+        private bool UpdatePositioning(bool onLoad = true)
+        {
+            //TODO: When the DPI changes, these values are still from the latest dpi.
+            var top = onLoad ? UserSettings.All.EditorTop : Top;
+            var left = onLoad ? UserSettings.All.EditorLeft : Left;
+            var width = onLoad ? UserSettings.All.EditorWidth : Width;
+            var height = onLoad ? UserSettings.All.EditorHeight : Height;
+            var state = onLoad ? UserSettings.All.EditorWindowState : WindowState;
+
+            //If the position was never set, let it center on screen. 
+            if (double.IsNaN(top) && double.IsNaN(left))
+                return false;
+
+            //The catch here is to get the closest monitor from current Top/Left point. 
+            var monitors = Monitor.AllMonitorsScaled(this.Scale());
+            var closest = monitors.FirstOrDefault(x => x.Bounds.Contains(new Point((int)left, (int)top))) ?? monitors.FirstOrDefault(x => x.IsPrimary);
+
+            if (closest == null)
+                return false;
+
+            //To much to the Left.
+            if (closest.WorkingArea.Left > left + width - 100)
+                left = closest.WorkingArea.Left;
+
+            //Too much to the top.
+            if (closest.WorkingArea.Top > top + height - 100)
+                top = closest.WorkingArea.Top;
+
+            //Too much to the right.
+            if (closest.WorkingArea.Right < left + 100)
+                left = closest.WorkingArea.Right - width;
+
+            //Too much to the bottom.
+            if (closest.WorkingArea.Bottom < top + 100)
+                top = closest.WorkingArea.Bottom - height;
+
+            Top = top;
+            Left = left;
+            Width = width;
+            Height = height;
+            WindowState = state;
+
+            return true;
+        }
+
         #endregion
 
-        #region Async Project
+        #region FFmpeg presets
 
-        private delegate void SaveProjectDelegate(string fileName);
-
-        private SaveProjectDelegate _saveProjectDel;
-
-        private void SaveProject(string fileName)
+        private void UpdateFfmpegPresetsList()
         {
-            ShowProgress(DispatcherStringResource("Editor.ExportingRecording"), Project.Frames.Count);
+            //Make sure it's not null first.
+            UserSettings.All.FfmpegPresets = UserSettings.All.FfmpegPresets ?? new ArrayList();
+
+            var list = UserSettings.All.FfmpegPresets.Cast<FfmpegPreset>().ToList();
+
+            //For each currently available FFmpeg output extension, make sure that a default preset is available.
+            foreach (var ext in FileTypeVideoComboBox.Items.OfType<string>())
+            {
+                var current = list.FirstOrDefault(f => f.Extension == ext);
+
+                if (current != null)
+                    continue;
+
+                //Creates a default preset.
+                current = new FfmpegPreset
+                {
+                    Extension = ext,
+                    LastSelected = true,
+                    IsDefault = true,
+                    Parameters = GetDefaultPresetParameters(ext),
+                };
+
+                list.Add(current);
+            }
+
+            //For the gif extension, make sure that a default preset is available.
+            var gifPreset = list.FirstOrDefault(f => f.Extension == ".gif");
+
+            if (gifPreset == null)
+            {
+                //Creates a default preset.
+                gifPreset = new FfmpegPreset
+                {
+                    Extension = ".gif",
+                    LastSelected = true,
+                    IsDefault = true,
+                    Parameters = GetDefaultPresetParameters(".gif"),
+                };
+
+                list.Add(gifPreset);
+            }
+
+            //For the apng extension, make sure that a default preset is available.
+            var apngPreset = list.FirstOrDefault(f => f.Extension == ".apng");
+
+            if (apngPreset == null)
+            {
+                //Creates a default preset.
+                apngPreset = new FfmpegPreset
+                {
+                    Extension = ".apng",
+                    LastSelected = true,
+                    IsDefault = true,
+                    Parameters = GetDefaultPresetParameters(".apng"),
+                };
+
+                list.Add(apngPreset);
+            }
+
+            //Persist the changes to the settings.
+            UserSettings.All.FfmpegPresets = new ArrayList(list.ToArray());
+
+            //Update the lists.
+            FfmpegPresetsComboBox.ItemsSource = list.Where(w => w.Extension == UserSettings.All.LatestVideoExtension).OrderBy(o => o.IsDefault).ThenBy(t => t.Name).ToList();
+            FfmpegGifPresetsComboBox.ItemsSource = list.Where(w => w.Extension == ".gif").OrderBy(o => o.IsDefault).ThenBy(t => t.Name).ToList();
+            FfmpegApngPresetsComboBox.ItemsSource = list.Where(w => w.Extension == ".apng").OrderBy(o => o.IsDefault).ThenBy(t => t.Name).ToList();
+        }
+
+        private void SelectDefaultFfmpegPreset()
+        {
+            FfmpegPresetsComboBox.SelectedItem = null;
+            FfmpegGifPresetsComboBox.SelectedItem = null;
+            FfmpegApngPresetsComboBox.SelectedItem = null;
+            FfmpegPresetsComboBox.SelectedItem = UserSettings.All.FfmpegPresets?.Cast<FfmpegPreset>().FirstOrDefault(w => w.Extension == UserSettings.All.LatestVideoExtension && w.LastSelected);
+            FfmpegGifPresetsComboBox.SelectedItem = UserSettings.All.FfmpegPresets?.Cast<FfmpegPreset>().FirstOrDefault(w => w.Extension == ".gif" && w.LastSelected);
+            FfmpegApngPresetsComboBox.SelectedItem = UserSettings.All.FfmpegPresets?.Cast<FfmpegPreset>().FirstOrDefault(w => w.Extension == ".apng" && w.LastSelected);
+        }
+
+        private void RefreshFfmpegPresetList(List<FfmpegPreset> list, string tag)
+        {
+            switch (tag)
+            {
+                case ".gif":
+                    FfmpegGifPresetsComboBox.ItemsSource = list.Where(w => w.Extension == ".gif").OrderBy(o => o.IsDefault).ThenBy(t => t.Name).ToList();
+                    break;
+                case ".apng":
+                    FfmpegApngPresetsComboBox.ItemsSource = list.Where(w => w.Extension == ".apng").OrderBy(o => o.IsDefault).ThenBy(t => t.Name).ToList();
+                    break;
+                default:
+                    FfmpegPresetsComboBox.ItemsSource = list.Where(w => w.Extension == UserSettings.All.LatestVideoExtension).OrderBy(o => o.IsDefault).ThenBy(t => t.Name).ToList();
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Persists changes to the current preset and sets it as the default for the current extension.
+        /// </summary>
+        private void PersistFfmpegPreset(string tag)
+        {
+            //Get the current preset.
+            var selected = (tag == ".gif" ? FfmpegGifPresetsComboBox : tag == ".apng" ? FfmpegApngPresetsComboBox : FfmpegPresetsComboBox).SelectedItem as FfmpegPreset;
+
+            if (selected == null)
+                return;
+
+            //Get all presets, so we can persist later.
+            var list = UserSettings.All.FfmpegPresets.Cast<FfmpegPreset>().ToList();
+            list.Remove(selected);
+
+            selected.Parameters = (tag == ".gif" ? FfmpegGifParameterTextBox : tag == ".apng" ? FfmpegApngParameterTextBox : FfmpegParameterTextBox).Text;
+            list.Add(selected);
+
+            //Set the current preset as last selected.
+            foreach (var preset in list)
+            {
+                if (preset.Extension != selected.Extension)
+                    continue;
+
+                preset.LastSelected = preset.Name == selected.Name;
+            }
+
+            //Persist the changes to the settings.
+            UserSettings.All.FfmpegPresets = new ArrayList(list.ToArray());
+
+            RefreshFfmpegPresetList(list, tag);
+        }
+
+        private void RemoveFfmpegPreset(string tag)
+        {
+            //Get the current preset.
+            var selected = (tag == ".gif" ? FfmpegGifPresetsComboBox : tag == ".apng" ? FfmpegApngPresetsComboBox : FfmpegPresetsComboBox).SelectedItem as FfmpegPreset;
+
+            if (selected == null)
+                return;
+
+            //Get all presets, so we can persist later.
+            var list = UserSettings.All.FfmpegPresets.Cast<FfmpegPreset>().ToList();
+            list.Remove(selected);
+
+            //Set other preset as last selected.
+            foreach (var preset in list)
+            {
+                if (preset.Extension != selected.Extension)
+                    continue;
+
+                preset.LastSelected = true;
+                break;
+            }
+
+            //Persist the changes to the settings.
+            UserSettings.All.FfmpegPresets = new ArrayList(list.ToArray());
+
+            RefreshFfmpegPresetList(list, tag);
+            SelectDefaultFfmpegPreset();
+        }
+
+        private void ResetFfmpegPreset(string tag)
+        {
+            //Get the current preset.
+            var selected = (tag == ".gif" ? FfmpegGifPresetsComboBox : tag == ".apng" ? FfmpegApngPresetsComboBox : FfmpegPresetsComboBox).SelectedItem as FfmpegPreset;
+
+            if (selected == null)
+                return;
+
+            //Get all presets, so we can persist later.
+            var list = UserSettings.All.FfmpegPresets.Cast<FfmpegPreset>().ToList();
+            list.Remove(selected);
+
+            //Reset its parameters.
+            selected.Parameters = GetDefaultPresetParameters(selected.Extension);
+            list.Add(selected);
+
+            //Set the current preset as last selected.
+            foreach (var preset in list)
+            {
+                if (preset.Extension != selected.Extension)
+                    continue;
+
+                preset.LastSelected = preset.Name == selected.Name;
+            }
+
+            //Persist the changes to the settings.
+            UserSettings.All.FfmpegPresets = new ArrayList(list.ToArray());
+
+            RefreshFfmpegPresetList(list, tag);
+            SelectDefaultFfmpegPreset();
+        }
+
+        private string GetDefaultPresetParameters(string extension)
+        {
+            switch (extension)
+            {
+                case ".apng":
+                    return "";
+                case ".avi":
+                    return "-c:v libx264 -pix_fmt yuv420p -vf \"pad=width={W}:height={H}:x=0:y=0:color=black\"";
+                case ".gif":
+                    return "-lavfi palettegen=stats_mode=diff[pal],[0:v][pal]paletteuse=new=1:diff_mode=rectangle";
+                case ".mkv":
+                    return "-f matroska -c:v libx265 -pix_fmt yuv420p -vf \"pad=width={W}:height={H}:x=0:y=0:color=black\"";
+                case ".mp4":
+                    return "-c:v libx264 -pix_fmt yuv420p -vf \"pad=width={W}:height={H}:x=0:y=0:color=black\"";
+                case ".webm":
+                    return "-c:v libvpx-vp9 -pix_fmt yuv420p -vf \"pad=width={W}:height={H}:x=0:y=0:color=black\"";
+                case ".wmv":
+                    return "-c:v wmv2 -pix_fmt yuv420p -vf \"pad=width={W}:height={H}:x=0:y=0:color=black\"";
+                default:
+                    return "";
+            }
+        }
+
+        #endregion
+
+        #region Other
+
+        public void NotificationUpdated()
+        {
+            RibbonTabControl.UpdateNotifications();
+        }
+
+        /// <summary>
+        /// If there's an update available, it will adjust the UI to warn the user about it.
+        /// It does not control the notification list, that's separated.
+        /// </summary>
+        private void DisplayUpdatePromoter()
+        {
+            if (Global.UpdateAvailable == null)
+            {
+                UpdateStackPanel.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            UpdateVersionRun.Text = $"{Global.UpdateAvailable.Version}";
+            UpdateSizeRun.Text = Global.UpdateAvailable.InstallerSize > 0 ? Humanizer.BytesToString(Global.UpdateAvailable.InstallerSize) : "";
+            UpdateStackPanel.Visibility = Visibility.Visible;
+        }
+
+        private void Discard(bool notify = true)
+        {
+            Pause();
+
+            if (notify && !Dialog.Ask(LocalizationHelper.Get("Editor.DiscardProject.Title"), LocalizationHelper.Get("Editor.DiscardProject.Instruction"), LocalizationHelper.Get("Editor.DiscardProject.Message"), false))
+                return;
+
+            #region Prepare UI
+
+            ClosePanel();
+
+            FrameListView.SelectedIndex = -1;
+            FrameListView.SelectionChanged -= FrameListView_SelectionChanged;
+
+            FrameListView.Items.Clear();
+            ClipboardListBox.Items.Clear();
+            Util.Clipboard.Items.Clear();
+            ZoomBoxControl.Clear();
+
+            #endregion
+
+            if (Project == null || !Project.Any) return;
+
+            _discardFramesDel = Discard;
+            _discardFramesDel.BeginInvoke(Project, DiscardCallback, null);
+        }
+
+        private void DeleteFrame(int index)
+        {
+            //Delete the File from the disk.
+            File.Delete(Project.Frames[index].Path);
+
+            //Remove from the list.
+            Project.Frames.RemoveAt(index);
+            FrameListView.Items.RemoveAt(index);
+        }
+
+        private List<FrameInfo> SelectedFrames()
+        {
+            var selectedIndexList = Dispatcher.Invoke(SelectedFramesIndex);
+            return Project.Frames.Where(x => selectedIndexList.Contains(Project.Frames.IndexOf(x))).ToList();
+        }
+
+        private string StringResource(string key)
+        {
+            return FindResource(key).ToString().Replace("\n", " ").Replace("\\n", " ").Replace("\r", " ").Replace("&#10;", " ").Replace("&#x0d;", " ");
+        }
+
+        private string DispatcherStringResource(string key)
+        {
+            return Dispatcher.Invoke(() => FindResource(key).ToString().Replace("\n", " ").Replace("\\n", " ").Replace("\r", " ").Replace("&#10;", " ").Replace("&#x0d;", " "));
+        }
+
+        private void ChangeFileNumber(int change)
+        {
+            //If there's no filename declared, show the default one.
+            if (string.IsNullOrWhiteSpace(GetOutputFilename()))
+            {
+                SetOutputFilename(StringResource("S.SaveAs.File.Animation"));
+                return;
+            }
+
+            var index = GetOutputFilename().Length;
+            int start = -1, end = -1;
+
+            //Detects the last number in a string.
+            foreach (var c in GetOutputFilename().Reverse())
+            {
+                if (char.IsNumber(c))
+                {
+                    if (end == -1)
+                        end = index;
+
+                    start = index - 1;
+                }
+                else if (start == index)
+                    break;
+
+                index--;
+            }
+
+            //If there's no number.
+            if (end == -1)
+            {
+                SetOutputFilename(GetOutputFilename() + $" ({change})");
+                return;
+            }
+
+            //If it's a negative number, include the signal.
+            if (start > 0 && GetOutputFilename().Substring(start - 1, 1).Equals("-"))
+                start--;
+
+            //Cut, convert, merge.
+            if (int.TryParse(GetOutputFilename().Substring(start, end - start), out var number))
+            {
+                var offset = start + number.ToString().Length;
+
+                SetOutputFilename(GetOutputFilename().Substring(0, start) + (number + change) + GetOutputFilename().Substring(offset, GetOutputFilename().Length - end));
+            }
+        }
+
+        private void UpdateStatistics()
+        {
+            TotalDuration = TimeSpan.FromMilliseconds(Project.Frames.Sum(x => x.Delay));
+            FrameSize = Project.Frames.Count > 0 ? Project.Frames[0].Path.ScaledSize() : new Size(0, 0);
+            FrameScale = Project.Frames.Count > 0 ? Convert.ToInt32(Project.Frames[0].Path.DpiOf() / 96d * 100d) : 0;
+            AverageDelay = Project.Frames.Count > 0 ? Project.Frames.Average(x => x.Delay) : 0;
+            FrameDpi = Project.Frames.Count > 0 ? Math.Round(Project.Frames[0].Path.DpiOf(), 0) : 0d;
+        }
+
+        private void UpdateOtherStatistics()
+        {
+            if (FrameListView.SelectedIndex > -1 && FrameListView.SelectedIndex < Project.Frames.Count - 1)
+                CurrentTime = TimeSpan.FromMilliseconds(Project.Frames.Take(FrameListView.SelectedIndex + 1).Sum(x => x.Delay));
+            else
+                CurrentTime = TimeSpan.Zero;
+        }
+
+        private void ShowHint(string hint, bool isPermanent = false, params object[] values)
+        {
+            if (HintTextBlock.Visibility == Visibility.Visible)
+                BeginStoryboard(this.FindStoryboard("HideHintStoryboard"), HandoffBehavior.Compose);
+
+            if (values.Length == 0)
+                HintTextBlock.Text = TryFindResource(hint) + "";
+            else
+                HintTextBlock.Text = string.Format(TryFindResource(hint) + "", values);
+
+            BeginStoryboard(this.FindStoryboard(isPermanent ? "ShowPermanentHintStoryboard" : "ShowHintStoryboard"), HandoffBehavior.Compose);
+        }
+
+        private void HideHint()
+        {
+            if (HintTextBlock.Visibility == Visibility.Visible)
+                BeginStoryboard(this.FindStoryboard("HideHintStoryboard"), HandoffBehavior.Compose);
+        }
+
+        private void SetFocusOnCurrentFrame()
+        {
+            FrameListView.Focus();
+
+            if (!(FrameListView.SelectedItem is FrameListBoxItem current))
+                return;
+
+            Keyboard.Focus(current);
+            current.Focus();
+        }
+
+        private string GetProgressText(int precision, bool showTotal, string format, string dateFormat, int startNumber, long cumulative, long total, int current)
+        {
+            try
+            {
+                switch (precision)
+                {
+                    case 0: //Minutes
+                        return showTotal ? TimeSpan.FromMilliseconds(cumulative).ToString(@"m\:ss") + "/" + TimeSpan.FromMilliseconds(total).ToString(@"m\:ss") : TimeSpan.FromMilliseconds(cumulative).ToString(@"m\:ss");
+                    case 1: //Seconds
+                        return showTotal ? (int)TimeSpan.FromMilliseconds(cumulative).TotalSeconds + "/" + TimeSpan.FromMilliseconds(total).TotalSeconds + " s" : (int)TimeSpan.FromMilliseconds(cumulative).TotalSeconds + " s";
+                    case 2: //Milliseconds
+                        return showTotal ? cumulative + "/" + total + " ms" : cumulative + " ms";
+                    case 3: //Percentage
+                        var count = (double)Project.Frames.Count;
+                        return (current / count * 100).ToString("##0.#", CultureInfo.CurrentUICulture) + (showTotal ? "/100%" : " %");
+                    case 4: //Frame number
+                        return showTotal ? (startNumber + current - 1) + "/" + (startNumber + Project.Frames.Count - 1) : current.ToString();
+                    case 5: //Custom
+                        return format
+                            .Replace("$ms", cumulative.ToString())
+                            .Replace("$s", ((int)TimeSpan.FromMilliseconds(cumulative).TotalSeconds).ToString())
+                            .Replace("$m", TimeSpan.FromMilliseconds(cumulative).ToString())
+                            .Replace("$p", (current / (double)Project.Frames.Count * 100).ToString("##0.#", CultureInfo.CurrentUICulture))
+                            .Replace("$f", (startNumber + current - 1).ToString())
+                            .Replace("@ms", total.ToString())
+                            .Replace("@s", ((int)TimeSpan.FromMilliseconds(total).TotalSeconds).ToString())
+                            .Replace("@m", TimeSpan.FromMilliseconds(total).ToString(@"m\:ss"))
+                            .Replace("@p", "100")
+                            .Replace("@f", (startNumber + Project.Frames.Count - 1).ToString());
+                    case 6: //Actual date/time
+                        return showTotal ? $"{Project.CreationDate.AddMilliseconds(cumulative).ToString(dateFormat)} -> {Project.CreationDate.AddMilliseconds(total).ToString(dateFormat)}"
+                            : Project.CreationDate.AddMilliseconds(cumulative).ToString(dateFormat);
+                    default:
+                        return "???";
+                }
+            }
+            catch (Exception e)
+            {
+                LogWriter.Log(e, "Invalid progress format.");
+                return "???";
+            }
+        }
+
+        private void ChangeProgressTextToCurrent()
+        {
+            var total = Project.Frames.Sum(y => y.Delay);
+            var cumulative = 0L;
+
+            for (var j = 0; j < FrameListView.SelectedIndex; j++)
+                cumulative += Project.Frames[j].Delay;
+
+            ProgressHorizontalTextBlock.Text = GetProgressText(UserSettings.All.ProgressPrecision, UserSettings.All.ProgressShowTotal, UserSettings.All.ProgressFormat, UserSettings.All.ProgressDateFormat,
+                UserSettings.All.ProgressStartNumber, cumulative, total, FrameListView.SelectedIndex + 1);
+        }
+
+        private string GetOutputFolder()
+        {
+            if (!GetPickLocation())
+                return Path.GetTempPath();
+
+            switch (UserSettings.All.SaveType)
+            {
+                case Export.Gif:
+                    return UserSettings.All.LatestOutputFolder ?? "";
+                case Export.Apng:
+                    return UserSettings.All.LatestApngOutputFolder ?? "";
+                case Export.Video:
+                    return UserSettings.All.LatestVideoOutputFolder ?? "";
+                case Export.Images:
+                    return UserSettings.All.LatestImageOutputFolder ?? "";
+                case Export.Project:
+                    return UserSettings.All.LatestProjectOutputFolder ?? "";
+                case Export.Photoshop:
+                    return UserSettings.All.LatestPhotoshopOutputFolder ?? "";
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
+
+        private string GetOutputFilename()
+        {
+            if (!GetPickLocation())
+                return Guid.NewGuid() + "";
+
+            switch (UserSettings.All.SaveType)
+            {
+                case Export.Gif:
+                    return UserSettings.All.LatestFilename ?? "";
+                case Export.Apng:
+                    return UserSettings.All.LatestApngFilename ?? "";
+                case Export.Video:
+                    return UserSettings.All.LatestVideoFilename ?? "";
+                case Export.Images:
+                    return UserSettings.All.LatestImageFilename ?? "";
+                case Export.Project:
+                    return UserSettings.All.LatestProjectFilename ?? "";
+                case Export.Photoshop:
+                    return UserSettings.All.LatestPhotoshopFilename ?? "";
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
+
+        /// <summary>
+        /// Puts the current date/time into filename, replacing the format typed in between two questions marks.
+        /// Such as 'Animation ?dd-MM-yy?' -> 'Animation 02-03-20'
+        /// </summary>
+        /// <param name="name">The name of the file, with the date/time format.</param>
+        /// <returns>The name with the date and time.</returns>
+        private string ReplaceRegexInName(string name)
+        {
+            var dateTimeFileNameRegEx = @"[?]([dyhms]+[-_ ]*)+[?]";
+
+            if (!Regex.IsMatch(name, dateTimeFileNameRegEx, RegexOptions.IgnoreCase))
+                return name;
+            
+            var match = Regex.Match(name, dateTimeFileNameRegEx, RegexOptions.IgnoreCase);
+            var date = DateTime.Now.ToString(Regex.Replace(match.Value, "[?]", ""));
+
+            return name.Replace(match.ToString(), date);
+        }
+
+        private string GetOutputExtension()
+        {
+            switch (UserSettings.All.SaveType)
+            {
+                case Export.Gif:
+                    return UserSettings.All.LatestExtension ?? ".gif";
+                case Export.Apng:
+                    return UserSettings.All.LatestApngExtension ?? ".png";
+                case Export.Video:
+                    return UserSettings.All.LatestVideoExtension ?? ".mp4";
+                case Export.Images:
+                    return UserSettings.All.LatestImageExtension ?? ".png";
+                case Export.Project:
+                    return UserSettings.All.LatestProjectExtension ?? ".stg";
+                case Export.Photoshop:
+                    return UserSettings.All.LatestPhotoshopExtension ?? ".psd";
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
+
+        private void SetOutputFolder(string folder)
+        {
+            switch (UserSettings.All.SaveType)
+            {
+                case Export.Gif:
+                    UserSettings.All.LatestOutputFolder = folder;
+                    break;
+                case Export.Apng:
+                    UserSettings.All.LatestApngOutputFolder = folder;
+                    break;
+                case Export.Video:
+                    UserSettings.All.LatestVideoOutputFolder = folder;
+                    break;
+                case Export.Images:
+                    UserSettings.All.LatestImageOutputFolder = folder;
+                    break;
+                case Export.Project:
+                    UserSettings.All.LatestProjectOutputFolder = folder;
+                    break;
+                case Export.Photoshop:
+                    UserSettings.All.LatestPhotoshopOutputFolder = folder;
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
+
+        private void SetOutputFilename(string filename)
+        {
+            switch (UserSettings.All.SaveType)
+            {
+                case Export.Gif:
+                    UserSettings.All.LatestFilename = filename;
+                    break;
+                case Export.Apng:
+                    UserSettings.All.LatestApngFilename = filename;
+                    break;
+                case Export.Video:
+                    UserSettings.All.LatestVideoFilename = filename;
+                    break;
+                case Export.Images:
+                    UserSettings.All.LatestImageFilename = filename;
+                    break;
+                case Export.Project:
+                    UserSettings.All.LatestProjectFilename = filename;
+                    break;
+                case Export.Photoshop:
+                    UserSettings.All.LatestPhotoshopFilename = filename;
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
+
+        private void SetOutputExtension(string extension)
+        {
+            switch (UserSettings.All.SaveType)
+            {
+                case Export.Gif:
+                    UserSettings.All.LatestExtension = extension;
+                    break;
+                case Export.Apng:
+                    UserSettings.All.LatestApngExtension = extension;
+                    break;
+                case Export.Video:
+                    UserSettings.All.LatestVideoExtension = extension;
+                    break;
+                case Export.Images:
+                    UserSettings.All.LatestImageExtension = extension;
+                    break;
+                case Export.Project:
+                    UserSettings.All.LatestProjectExtension = extension;
+                    break;
+                case Export.Photoshop:
+                    UserSettings.All.LatestPhotoshopExtension = extension;
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
+
+        private bool GetPickLocation()
+        {
+            switch (UserSettings.All.SaveType)
+            {
+                case Export.Gif:
+                    return UserSettings.All.PickLocation;
+                case Export.Apng:
+                    return UserSettings.All.PickLocationApng;
+                case Export.Video:
+                    return UserSettings.All.PickLocationVideo;
+                case Export.Photoshop:
+                    return UserSettings.All.PickLocationPhotoshop;
+                case Export.Project:
+                case Export.Images:
+                    return true;
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
+
+        private bool GetOverwriteOnSave()
+        {
+            switch (UserSettings.All.SaveType)
+            {
+                case Export.Gif:
+                    return UserSettings.All.OverwriteOnSave;
+                case Export.Apng:
+                    return UserSettings.All.OverwriteOnSaveApng;
+                case Export.Video:
+                    return UserSettings.All.OverwriteOnSaveVideo;
+                case Export.Project:
+                    return UserSettings.All.OverwriteOnSaveProject;
+                case Export.Images:
+                    return UserSettings.All.OverwriteOnSaveImages;
+                case Export.Photoshop:
+                    return UserSettings.All.OverwriteOnSavePhotoshop;
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
+
+        private bool GetSaveAsProjectToo()
+        {
+            switch (UserSettings.All.SaveType)
+            {
+                case Export.Gif:
+                    return UserSettings.All.SaveAsProjectToo;
+                case Export.Apng:
+                    return UserSettings.All.SaveAsProjectTooApng;
+                case Export.Video:
+                    return UserSettings.All.SaveAsProjectTooVideo;
+                case Export.Photoshop:
+                    return UserSettings.All.SaveAsProjectTooPhotoshop;
+                case Export.Project:
+                case Export.Images:
+                    return false;
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
+
+        private bool GetUploadFile()
+        {
+            switch (UserSettings.All.SaveType)
+            {
+                case Export.Gif:
+                    return UserSettings.All.UploadFile;
+                case Export.Apng:
+                case Export.Video:
+                case Export.Project:
+                case Export.Images:
+                case Export.Photoshop:
+                    return false;
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
+
+        private bool GetSaveToClipboard()
+        {
+            switch (UserSettings.All.SaveType)
+            {
+                case Export.Gif:
+                    return UserSettings.All.SaveToClipboard;
+                case Export.Apng:
+                    return UserSettings.All.SaveToClipboardApng;
+                case Export.Video:
+                    return UserSettings.All.SaveToClipboardVideo;
+                case Export.Project:
+                    return UserSettings.All.SaveToClipboardProject;
+                case Export.Photoshop:
+                    return UserSettings.All.SaveToClipboardPhotoshop;
+                case Export.Images:
+                    return false;
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
+
+        private CopyType GetCopyType()
+        {
+            switch (UserSettings.All.SaveType)
+            {
+                case Export.Gif:
+                    return UserSettings.All.LatestCopyType;
+                case Export.Apng:
+                    return UserSettings.All.LatestCopyTypeApng;
+                case Export.Video:
+                    return UserSettings.All.LatestCopyTypeVideo;
+                case Export.Project:
+                    return UserSettings.All.LatestCopyTypeProject;
+                case Export.Photoshop:
+                    return UserSettings.All.LatestCopyTypePhotoshop;
+                case Export.Images:
+                    return CopyType.File;
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
+
+        private bool GetExecuteCustomCommands()
+        {
+            switch (UserSettings.All.SaveType)
+            {
+                case Export.Gif:
+                    return UserSettings.All.ExecuteCustomCommands;
+                case Export.Apng:
+                    return UserSettings.All.ExecuteCustomCommandsApng;
+                case Export.Video:
+                    return UserSettings.All.ExecuteCustomCommandsVideo;
+                case Export.Photoshop:
+                    return UserSettings.All.ExecuteCustomCommandsPhotoshop;
+                case Export.Project:
+                case Export.Images:
+                    return false;
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
+
+        private string GetCustomCommands()
+        {
+            switch (UserSettings.All.SaveType)
+            {
+                case Export.Gif:
+                    return UserSettings.All.CustomCommands;
+                case Export.Apng:
+                    return UserSettings.All.CustomCommandsApng;
+                case Export.Video:
+                    return UserSettings.All.CustomCommandsVideo;
+                case Export.Photoshop:
+                    return UserSettings.All.CustomCommandsPhotoshop;
+                case Export.Project:
+                case Export.Images:
+                    return "";
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
+
+        #endregion
+
+        #endregion
+
+
+        #region Async
+
+        #region Async Load Recent
+
+        private delegate void LoadRecentDelegate();
+
+        private LoadRecentDelegate _loadRecentDel;
+
+        private void LoadRecentAsync()
+        {
+            ShowProgress(DispatcherStringResource("Recent.EnumeratingProjects"), 100, true);
 
             Dispatcher.Invoke(() => IsLoading = true);
 
-            #region Export as Project
+            #region Enumerate recent projects
+
+            var list = new List<ProjectInfo>();
 
             try
             {
-                //Serialize the current list of frames.
-                Project.Persist();
+                Dispatcher.Invoke(() => RecentDataGrid.ItemsSource = null);
 
-                if (File.Exists(fileName))
-                    File.Delete(fileName);
+                var path = Path.Combine(UserSettings.All.TemporaryFolderResolved, "ScreenToGif", "Recording");
 
-                var exportDir = Path.Combine(Project.FullPath, "Export");
-
-                if (Directory.Exists(exportDir))
-                    Directory.Delete(exportDir, true);
-
-                var dir = Directory.CreateDirectory(exportDir);
-
-                File.Copy(Project.ProjectPath, Path.Combine(exportDir, "Project.json"));
-
-                var count = 0;
-                foreach (var frameInfo in Project.Frames)
+                if (!Directory.Exists(path))
                 {
-                    File.Copy(frameInfo.Path, Path.Combine(dir.FullName, Path.GetFileName(frameInfo.Path)), true);
-                    UpdateProgress(count++);
+                    Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() => RecentDataGrid.ItemsSource = null));
+                    return;
                 }
 
-                ZipFile.CreateFromDirectory(dir.FullName, fileName);
+                var folderList = Directory.GetDirectories(path).Select(x => new DirectoryInfo(x)).ToList();
 
-                Directory.Delete(dir.FullName, true);
+                foreach (var folder in folderList)
+                {
+                    var file = Path.Combine(folder.FullName, "Project.json");
+
+                    if (!File.Exists(file))
+                        continue;
+
+                    var json = File.ReadAllText(file);
+
+                    using (var ms = new MemoryStream(Encoding.UTF8.GetBytes(json)))
+                    {
+                        var ser = new DataContractJsonSerializer(typeof(ProjectInfo));
+                        var project = ser.ReadObject(ms) as ProjectInfo;
+
+                        //Ignore empty projects.
+                        if (project == null || project.Frames.Count == 0 || !project.Frames.Any(x => File.Exists(x.Path)))
+                            continue;
+
+                        list.Add(project);
+                    }
+                }
+
+                //Waits the animation to complete before filling the grid.
+                Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+                {
+                    RecentDataGrid.ItemsSource = list;
+
+                    if (RecentDataGrid.Items.Count > 0)
+                    {
+                        RecentDataGrid.Sort(ListSortDirection.Descending, "CreationDate");
+                        RecentDataGrid.FocusOnFirstCell();
+                    }
+                }));
             }
             catch (Exception ex)
             {
-                LogWriter.Log(ex, "Exporting Recording as a Project");
+                LogWriter.Log(ex, "Loading list of recent");
 
-                Dispatcher.Invoke(() => Dialog.Ok("Error While Saving", "Error while Saving as Project", ex.Message));
+                Dispatcher.Invoke(() => ErrorDialog.Ok("ScreenToGif", "Error while enumerating recent projects", ex.Message, ex));
             }
 
             #endregion
         }
 
-        private void SaveProjectCallback(IAsyncResult ar)
+        private void LoadRecentCallback(IAsyncResult ar)
         {
-            _saveProjectDel.EndInvoke(ar);
+            _loadRecentDel.EndInvoke(ar);
+
+            Dispatcher.Invoke(() =>
+            {
+                Cursor = Cursors.Arrow;
+                IsLoading = false;
+
+                HideProgress();
+
+                CommandManager.InvalidateRequerySuggested();
+            });
+
+            GC.Collect();
+        }
+
+        #endregion
+
+        #region Async Save
+
+        private delegate bool SaveDelegate(List<FrameInfo> listFrames, Parameters param, double scale, bool projectToo, bool usePadding = false);
+
+        private SaveDelegate _saveDel;
+
+        private bool SaveAsync(List<FrameInfo> frames, Parameters param, double scale, bool projectToo, bool usePadding = false)
+        {
+            ShowProgress(DispatcherStringResource("S.Editor.PreparingSaving"), Project.Frames.Count, true);
+
+            Dispatcher.Invoke(() => IsLoading = true);
+
+            #region Save
+
+            try
+            {
+                //Copy the frames, so it can be manipulated without problem.
+                var copied = Project.CopyToExport(usePadding, param.Type == Export.Project);
+
+                Dispatcher.Invoke(() => Encoder.AddItem(copied, param, scale));
+
+                if (projectToo)
+                {
+                    var proParam = new Parameters
+                    {
+                        Type = Export.Project,
+                        Filename = Path.Combine(GetOutputFolder(), GetOutputFilename() + (UserSettings.All.LatestProjectExtension ?? ".stg")),
+                        CompressionLevel = UserSettings.All.CompressionLevelProject,
+                    };
+
+                    //Copy the frames, so it can be manipulated without problem.
+                    var copied2 = Project.CopyToExport(usePadding, true);
+
+                    Dispatcher.Invoke(() => Encoder.AddItem(copied2, proParam, scale));
+                }
+            }
+            catch (Exception ex)
+            {
+                LogWriter.Log(ex, "Preparing to save the recording");
+
+                Dispatcher.Invoke(() => Dialog.Ok("Error While Saving", "Error while preparing to save", ex.Message)); //TODO: Translate
+            }
+
+            return projectToo;
+
+            #endregion
+        }
+
+        private void SaveCallback(IAsyncResult ar)
+        {
+            var result = _saveDel.EndInvoke(ar);
 
             Dispatcher.Invoke(() =>
             {
@@ -4238,11 +6312,9 @@ namespace ScreenToGif.Windows
                     UpdateProgress(count++);
                 }
 
-                //TODO: Should I delete the json file?
+                //Deletes the JSON file.
                 if (File.Exists(project.ProjectPath))
                     File.Delete(project.ProjectPath);
-
-                project.Frames.Clear();
             }
             catch (IOException io)
             {
@@ -4255,7 +6327,7 @@ namespace ScreenToGif.Windows
             }
 
             ActionStack.Clear();
-            project.Frames.Clear();
+            project.Clear();
 
             HideProgress();
         }
@@ -4266,11 +6338,13 @@ namespace ScreenToGif.Windows
 
             Dispatcher.Invoke(() =>
             {
-                WelcomeGrid.BeginStoryboard(FindResource("ShowWelcomeBorderStoryboard") as Storyboard, HandoffBehavior.Compose);
+                WelcomeGrid.BeginStoryboard(this.FindStoryboard("ShowWelcomeBorderStoryboard"), HandoffBehavior.Compose);
 
                 FilledList = false;
                 IsLoading = false;
-                WelcomeTextBlock.Text = Humanizer.Welcome();
+
+                WelcomeTextBlock.Text = StringResource(Humanizer.WelcomeInfo());
+                SymbolTextBlock.Text = Humanizer.Welcome();
 
                 UpdateStatistics();
 
@@ -4320,9 +6394,7 @@ namespace ScreenToGif.Windows
                 png.Frames.Add(ImageMethods.ResizeImage((BitmapImage)frame.Path.SourceFrom(), width, height, 0, dpi));
 
                 using (Stream stm = File.OpenWrite(frame.Path))
-                {
                     png.Save(stm);
-                }
 
                 UpdateProgress(count++);
             }
@@ -4359,9 +6431,7 @@ namespace ScreenToGif.Windows
                 png.Frames.Add(BitmapFrame.Create(frame.Path.CropFrom(rect)));
 
                 using (Stream stm = File.OpenWrite(frame.Path))
-                {
                     png.Save(stm);
-                }
 
                 UpdateProgress(count++);
             }
@@ -4381,11 +6451,11 @@ namespace ScreenToGif.Windows
 
         #region Async Progress
 
-        private delegate void Progress();
+        private delegate void ProgressDelegate(ProgressModel model);
 
-        private Progress _progressDel;
+        private ProgressDelegate _progressDelegateDel;
 
-        private void ProgressAsync()
+        private void ProgressAsync(ProgressModel model)
         {
             Dispatcher.Invoke(() =>
             {
@@ -4394,82 +6464,105 @@ namespace ScreenToGif.Windows
 
             ShowProgress(DispatcherStringResource("Editor.ApplyingOverlay"), Project.Frames.Count);
 
-            var dpi = Project.Frames[0].Path.DpiOf();
-            var scaledSize = Project.Frames[0].Path.ScaledSize();
             var total = Project.Frames.Sum(y => y.Delay);
+            var thickness = model.Thickness * ZoomBoxControl.ScaleDiff;
+            var fontSize = model.FontSize * ZoomBoxControl.ScaleDiff;
 
-            var count = 0;
+            var count = 1;
+            var cumulative = 0L;
+
             foreach (var frame in Project.Frames)
             {
                 var image = frame.Path.SourceFrom();
-
-                var render = Dispatcher.Invoke(() =>
-                {
-                    if (UserSettings.All.ProgressType == ProgressType.Bar)
-                    {
-                        #region Bar
-
-                        //Set the size of the bar as the percentage of the total size: Current/Total * Available size
-                        ProgressHorizontalRectangle.Width = count / (double)Project.Frames.Count * ProgressOverlayGrid.RenderSize.Width;
-                        ProgressVerticalRectangle.Height = count / (double)Project.Frames.Count * ProgressOverlayGrid.RenderSize.Height;
-
-                        //Assures that the UIElement is up to the changes.
-                        ProgressHorizontalRectangle.Arrange(new Rect(ProgressOverlayGrid.RenderSize));
-                        ProgressVerticalRectangle.Arrange(new Rect(ProgressOverlayGrid.RenderSize));
-
-                        //Renders the current Visual.
-                        return ProgressOverlayGrid.GetRender(dpi, scaledSize);
-
-                        #endregion
-                    }
-
-                    #region Text
-
-                    //Calculates the cumulative total milliseconds.
-                    var cumulative = 0L;
-
-                    for (var j = 0; j < count; j++)
-                        cumulative += Project.Frames[j].Delay;
-
-                    //Type of the representation.
-                    ChangeProgressText(cumulative, total, count);
-
-                    //Assures that the UIElement is up to the changes.
-                    ProgressHorizontalTextBlock.Arrange(new Rect(ProgressOverlayGrid.RenderSize));
-
-                    //Renders the current Visual.
-                    return ProgressOverlayGrid.GetRender(dpi, scaledSize);
-
-                    #endregion
-                });
-
 
                 var drawingVisual = new DrawingVisual();
                 using (var drawingContext = drawingVisual.RenderOpen())
                 {
                     drawingContext.DrawImage(image, new Rect(0, 0, image.Width, image.Height));
-                    drawingContext.DrawImage(render, new Rect(0, 0, render.Width, render.Height));
+
+                    //TODO: Test with high dpi.
+                    if (model.Type == ProgressType.Bar)
+                    {
+                        #region Bar
+
+                        if (model.Orientation == Orientation.Horizontal)
+                        {
+                            //Width changes (Current/Total * Available size), Height is thickness.
+                            var width = count / (double)Project.Frames.Count * image.Width; //* image.Width instead?
+                            var left = model.HorizontalAlignment == HorizontalAlignment.Left ? 0 :
+                                model.HorizontalAlignment == HorizontalAlignment.Right ? image.Width - width :
+                                (image.Width - width) / 2d;
+                            var top = model.VerticalAlignment == VerticalAlignment.Top ? 0 :
+                                model.VerticalAlignment == VerticalAlignment.Bottom ? image.Height - thickness :
+                                (image.Height - thickness) / 2d;
+
+                            drawingContext.DrawRectangle(new SolidColorBrush(model.Color), null, new Rect(Math.Round(left, 0), Math.Round(top, 0), Math.Round(width, 0), thickness));
+                        }
+                        else
+                        {
+                            //Height changes (Current/Total * Available size), Width is thickness.
+                            var height = count / (double)Project.Frames.Count * image.Height;
+                            var left = model.HorizontalAlignment == HorizontalAlignment.Left ? 0 :
+                                model.HorizontalAlignment == HorizontalAlignment.Right ? image.Width - thickness :
+                                (image.Width - thickness) / 2d;
+                            var top = model.VerticalAlignment == VerticalAlignment.Top ? 0 :
+                                model.VerticalAlignment == VerticalAlignment.Bottom ? image.Height - height :
+                                (image.Height - height) / 2d;
+
+                            drawingContext.DrawRectangle(new SolidColorBrush(model.Color), null, new Rect(Math.Round(left, 0), Math.Round(top, 0), thickness, Math.Round(height, 0)));
+                        }
+
+                        #endregion
+                    }
+                    else
+                    {
+                        #region Text
+
+                        if (count > 0)
+                            cumulative += Project.Frames[count - 1].Delay;
+
+                        //Calculate size.
+                        var text = GetProgressText(model.Precision, model.ShowTotal, model.Format, model.DateFormat, model.StartNumber, cumulative, total, count); //FrameListView.SelectedIndex
+                        var formatted = new FormattedText(text, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
+                            new Typeface(model.FontFamily, model.FontStyle, model.FontWeight, default), fontSize, new SolidColorBrush(model.FontColor),
+                            null, TextFormattingMode.Ideal);
+
+                        var width = formatted.Width + 4; //2px padding for both sides. 
+                        var height = formatted.Height;
+                        var left = model.HorizontalAlignment == HorizontalAlignment.Left ? 0 :
+                            model.HorizontalAlignment == HorizontalAlignment.Right ? image.Width - width :
+                            (image.Width - width) / 2d;
+                        var top = model.VerticalAlignment == VerticalAlignment.Top ? 0 :
+                            model.VerticalAlignment == VerticalAlignment.Bottom ? image.Height - height :
+                            (image.Height - height) / 2d;
+
+                        //Draw background rectangle and the text.
+                        drawingContext.DrawRectangle(new SolidColorBrush(model.Color), null, new Rect(Math.Round(left, 0), Math.Round(top, 0), Math.Round(width, 0), Math.Round(height, 0)));
+                        drawingContext.DrawText(formatted, new Point(Math.Round(left + 2, 0), Math.Round(top, 0)));
+
+                        #endregion
+                    }
                 }
 
-                // Converts the Visual (DrawingVisual) into a BitmapSource
-                var bmp = new RenderTargetBitmap(image.PixelWidth, image.PixelHeight, dpi, dpi, PixelFormats.Pbgra32);
+                //Converts the Visual (DrawingVisual) into a BitmapSource.
+                var bmp = new RenderTargetBitmap(image.PixelWidth, image.PixelHeight, ZoomBoxControl.ImageDpi, ZoomBoxControl.ImageDpi, PixelFormats.Pbgra32);
                 bmp.Render(drawingVisual);
 
-                // Creates a PngBitmapEncoder and adds the BitmapSource to the frames of the encoder
+                //Creates a PngBitmapEncoder and adds the BitmapSource to the frames of the encoder.
                 var encoder = new PngBitmapEncoder();
                 encoder.Frames.Add(BitmapFrame.Create(bmp));
 
-                // Saves the image into a file using the encoder
+                //Saves the image into a file using the encoder.
                 using (Stream stream = File.Create(frame.Path))
                     encoder.Save(stream);
 
-                UpdateProgress(count++);
+                UpdateProgress((count++) - 1);
             }
         }
 
         private void ProgressCallback(IAsyncResult ar)
         {
-            _progressDel.EndInvoke(ar);
+            _progressDelegateDel.EndInvoke(ar);
 
             Dispatcher.Invoke(() =>
             {
@@ -4485,7 +6578,7 @@ namespace ScreenToGif.Windows
 
         private OverlayFrames _overlayFramesDel;
 
-        private List<int> Overlay(RenderTargetBitmap render, double dpi, bool forAll = false)
+        private List<int> OverlayAsync(RenderTargetBitmap render, double dpi, bool forAll = false)
         {
             var frameList = forAll ? Project.Frames : SelectedFrames();
             var selectedList = Dispatcher.Invoke(() =>
@@ -4533,13 +6626,14 @@ namespace ScreenToGif.Windows
 
             Dispatcher.Invoke(() =>
             {
-                ShowHint("Hint.Overlay");
+                ShowHint("S.Hint.Overlay");
 
                 LoadSelectedStarter(selected.Min(), selected.Max());
             });
         }
 
 
+        //Currently not being used.
         private delegate List<int> OverlayMultipleFrames(List<RenderTargetBitmap> render, double dpi, bool forAll = false);
 
         private OverlayMultipleFrames _overlayMultipleFramesDel;
@@ -4592,7 +6686,7 @@ namespace ScreenToGif.Windows
 
             Dispatcher.Invoke(() =>
             {
-                ShowHint("Hint.Overlay");
+                ShowHint("S.Hint.Overlay");
 
                 LoadSelectedStarter(selected.Min(), selected.Max());
             });
@@ -4616,7 +6710,7 @@ namespace ScreenToGif.Windows
 
             var name = Path.GetFileNameWithoutExtension(Project.Frames[selected].Path);
             var folder = Path.GetDirectoryName(Project.Frames[selected].Path);
-            var fileName = Path.Combine(folder, $"{name} TF {DateTime.Now.ToString("hh-mm-ss")}.png");
+            var fileName = Path.Combine(folder, $"{name} TF {DateTime.Now:hh-mm-ss}.png");
 
             var encoder = new PngBitmapEncoder();
             encoder.Frames.Add(BitmapFrame.Create(render));
@@ -4641,7 +6735,7 @@ namespace ScreenToGif.Windows
 
             Dispatcher.Invoke(() =>
             {
-                ShowHint("Hint.TitleFrame");
+                ShowHint("S.Hint.TitleFrame");
 
                 LoadSelectedStarter(selected, Project.Frames.Count - 1);
             });
@@ -4651,28 +6745,58 @@ namespace ScreenToGif.Windows
 
         #region Async Keystrokes
 
-        private delegate void KeyStrokesDelegate();
+        private delegate void KeyStrokesDelegate(KeyStrokesModel model);
 
         private KeyStrokesDelegate _keyStrokesDelegate;
 
-        private void KeyStrokesAsync()
+        private void KeyStrokesAsync(KeyStrokesModel model)
         {
-            Dispatcher.Invoke(() =>
+            Dispatcher?.Invoke(() =>
             {
                 IsLoading = true;
-                KeyStrokesInternalGrid.MinHeight = UserSettings.All.KeyStrokesFontFamily.LineSpacing * UserSettings.All.KeyStrokesFontSize + UserSettings.All.KeyStrokesMargin * 2;
             });
 
             ShowProgress(DispatcherStringResource("Editor.ApplyingOverlay"), Project.Frames.Count);
 
-            var dpi = Project.Frames[0].Path.DpiOf();
-            var scaledSize = Project.Frames[0].Path.ScaledSize();
-
             var auxList = Project.Frames.CopyList();
+
+            #region Make the keystrokes start earlier
+
+            if (model.KeyStrokesEarlier)
+            {
+                //Checks if there is a key stroke that needs to be shown earlier, into the previous frames.
+                for (var outer = 0; outer < auxList.Count; outer++)
+                {
+                    //For each frame, check if any other key pressed later wants to be shown on this frame.
+
+                    var amount = 0;
+
+                    //If it's the last item of the list.
+                    //if (outer == auxList.Count - 1 && amount <= model.KeyStrokesEarlierBy)
+                    //    auxList[outer].KeyList.InsertRange(auxList[outer].KeyList.Count, auxList[0].KeyList);
+
+                    //Check next itens.
+                    for (var inner = outer + 1; inner < auxList.Count - 1; inner++)
+                    {
+                        //For each frame, check if a next frame needs to show their key strokes.
+                        amount += auxList[inner].Delay;
+
+                        //If next item bleeds into this frame, insert on the list.
+                        if (inner < auxList.Count - 1 && auxList[inner + 1].Delay <= model.KeyStrokesEarlierBy)
+                            auxList[outer].KeyList.InsertRange(auxList[outer].KeyList.Count, auxList[inner].KeyList);
+
+                        //Stops veryfying the previous frames if the delay sum is greater than the maximum.
+                        if (amount >= model.KeyStrokesEarlierBy)
+                            break;
+                    }
+                }
+            }
+
+            #endregion
 
             #region Expand the keystrokes
 
-            if (UserSettings.All.KeyStrokesExtended)
+            if (model.KeyStrokesExtended)
             {
                 //Checks from the end to the start, if there is a key stroke that needs to 'bleed'/'delayed' into the next frames.
                 //I need to check from the end to the start so the keystrokes stays in position. 
@@ -4680,8 +6804,12 @@ namespace ScreenToGif.Windows
                 {
                     var amount = 0;
 
-                    if (outer == 1 && amount <= UserSettings.All.KeyStrokesDelay)
-                        auxList[1].KeyList.InsertRange(0, auxList[0].KeyList);
+                    if (outer == 1 && amount <= model.KeyStrokesDelay)
+                    {
+                        var listA = auxList[0].KeyList.TakeWhile((_, i) => !auxList[0].KeyList.Skip(i).SequenceEqual(auxList[1].KeyList.Take(auxList[0].KeyList.Count - i))).Concat(auxList[1].KeyList);
+
+                        auxList[1].KeyList = new List<SimpleKeyGesture>(listA);
+                    }
 
                     //Check previous itens.
                     for (var inner = outer - 1; inner >= 0; inner--)
@@ -4690,17 +6818,30 @@ namespace ScreenToGif.Windows
                         amount += auxList[inner].Delay;
 
                         //If previous item bleeds into this frame, insert on the list.
-                        if (inner > 0 && auxList[inner - 1].Delay <= UserSettings.All.KeyStrokesDelay)
-                            auxList[outer].KeyList.InsertRange(0, auxList[inner].KeyList);
+                        if (inner > 0 && auxList[inner - 1].Delay <= model.KeyStrokesDelay)
+                        {
+                            var listA = auxList[inner].KeyList.TakeWhile((_, i) => !auxList[inner].KeyList.Skip(i).SequenceEqual(auxList[outer].KeyList.Take(auxList[inner].KeyList.Count - i))).Concat(auxList[outer].KeyList);
 
-                        //Stops veryfying the previous frames if the delay sum is grester than the maximum.
-                        if (amount >= UserSettings.All.KeyStrokesDelay)
+                            auxList[outer].KeyList = new List<SimpleKeyGesture>(listA);
+                        }
+
+                        //Stops veryfying the previous frames if the delay sum is greater than the maximum.
+                        if (amount >= model.KeyStrokesDelay)
                             break;
                     }
                 }
             }
 
             #endregion
+
+            //Pen used for drawing the outline of the text shape.
+            var pen = new Pen(new SolidColorBrush(model.KeyStrokesOutlineColor), model.KeyStrokesOutlineThickness)
+            {
+                DashCap = PenLineCap.Round,
+                EndLineCap = PenLineCap.Round,
+                LineJoin = PenLineJoin.Round,
+                StartLineCap = PenLineCap.Round
+            };
 
             var count = 0;
             foreach (var frame in auxList)
@@ -4711,49 +6852,151 @@ namespace ScreenToGif.Windows
                     continue;
                 }
 
-                var image = frame.Path.SourceFrom();
+                #region Removes any duplicated modifier key
 
-                var render = Dispatcher.Invoke(() =>
+                var keyList = new List<SimpleKeyGesture>();
+                for (var i = 0; i < frame.KeyList.Count; i++)
                 {
-                    #region Text
+                    //Ignore Control, Shift, Alt and Windows keys if not acting as modifiers.
+                    if (model.KeyStrokesIgnoreNonModifiers && (frame.KeyList[i].Key >= Key.LeftShift && frame.KeyList[i].Key <= Key.RightAlt || frame.KeyList[i].Key == Key.LWin || frame.KeyList[i].Key == Key.RWin))
+                        continue;
 
-                    //Update text with key strokes.
-                    KeyStrokesLabel.Text = frame.KeyList.Select(x => "" + Native.GetSelectKeyText(x.Key, x.Modifiers)).Aggregate((p, n) => p + UserSettings.All.KeyStrokesSeparator + n);
+                    //If there's another key ahead on the same frame.
+                    if (frame.KeyList.Count > i + 1)
+                    {
+                        //If this frame being added will be repeated next, ignore.
+                        if (frame.KeyList[i + 1].Key == frame.KeyList[i].Key && frame.KeyList[i + 1].Modifiers == frame.KeyList[i].Modifiers)
+                            continue;
 
-                    KeyStrokesLabel.UpdateLayout();
+                        //TODO: If there's a key between the current key and the one that is repeated, they are going to be shown.
 
-                    //Renders the current Visual.
-                    return KeyStrokesOverlayGrid.GetRender(dpi, scaledSize);
+                        //If this frame being added will be repeated within the next key presses as a modifier, ignore.
+                        if ((frame.KeyList[i].Key == Key.LeftCtrl || frame.KeyList[i].Key == Key.RightCtrl) && (frame.KeyList[i + 1].Modifiers & ModifierKeys.Control) != 0)
+                            continue;
 
-                    #endregion
-                });
+                        if ((frame.KeyList[i].Key == Key.LeftShift || frame.KeyList[i].Key == Key.RightShift) && (frame.KeyList[i + 1].Modifiers & ModifierKeys.Shift) != 0)
+                            continue;
 
-                if (render == null)
+                        if ((frame.KeyList[i].Key == Key.LeftAlt || frame.KeyList[i].Key == Key.RightAlt) && (frame.KeyList[i + 1].Modifiers & ModifierKeys.Alt) != 0)
+                            continue;
+
+                        if ((frame.KeyList[i].Key == Key.LWin || frame.KeyList[i].Key == Key.RWin) && (frame.KeyList[i + 1].Modifiers & ModifierKeys.Windows) != 0)
+                            continue;
+                    }
+
+                    //Removes the previous modifier key, if a combination is next to it: "LeftCtrl Control + A" will be "Control + A". (This checks if the next modifier is not present as a current key).
+                    if (i + 1 > frame.KeyList.Count - 1 || !(frame.KeyList[i].Key != Key.Left && frame.KeyList[i].Key != Key.Right && frame.KeyList[i + 1].Modifiers.ToString().Contains(frame.KeyList[i].Key.ToString().Remove("Left", "Right").Replace("Ctrl", "Control").TrimStart('L').TrimStart('R'))))
+                        keyList.Add(frame.KeyList[i]);
+                }
+
+                if (keyList.Count == 0)
                 {
                     UpdateProgress(count++);
                     continue;
                 }
 
+                #endregion
+
+                #region Prepare the text
+
+                var text = keyList.Select(x => "" + Native.GetSelectKeyText(x.Key, x.Modifiers, x.IsUppercase)).Aggregate((p, n) => p + model.KeyStrokesSeparator + n);
+
+                if (string.IsNullOrEmpty(text))
+                {
+                    UpdateProgress(count++);
+                    continue;
+                }
+
+                #endregion
+
+                var image = frame.Path.SourceFrom();
+
+                #region Check if margins and paddings are set properly
+
+                if (image.Width - (model.KeyStrokesPadding + model.KeyStrokesMargin) * 2 <= 0 || image.Height - (model.KeyStrokesPadding + model.KeyStrokesMargin) * 2 <= 0)
+                {
+                    UpdateProgress(count++);
+                    continue;
+                }
+
+                #endregion
+
                 var drawingVisual = new DrawingVisual();
                 using (var drawingContext = drawingVisual.RenderOpen())
                 {
+                    //The FormattedText class helps in transforming the text to a shape.
+                    var formatted = new FormattedText(text, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
+                        new Typeface(model.KeyStrokesFontFamily, model.KeyStrokesFontStyle, model.KeyStrokesFontWeight, default), model.KeyStrokesFontSize,
+                        new SolidColorBrush(model.KeyStrokesFontColor), null, TextFormattingMode.Ideal)
+                    {
+                        MaxTextWidth = image.Width - (model.KeyStrokesPadding + model.KeyStrokesMargin) * 2,
+                        MaxTextHeight = image.Height - (model.KeyStrokesPadding + model.KeyStrokesMargin) * 2,
+                    };
+
+                    //TODO: Test with high dpi.
+
+                    var geometry = formatted.BuildGeometry(new Point(0.5, 0.5));
+                    var bounds = geometry.GetRenderBounds(pen);
+
+                    var widthText = bounds.Width + model.KeyStrokesPadding * 2;
+                    var heightText = bounds.Height + model.KeyStrokesPadding * 2 + 1; //Why 1?
+
+                    var leftText =
+                        model.KeyStrokesHorizontalAlignment == HorizontalAlignment.Left ? model.KeyStrokesMargin - bounds.X :
+                        model.KeyStrokesHorizontalAlignment == HorizontalAlignment.Right ? image.Width - widthText - bounds.X - model.KeyStrokesMargin :
+                        (image.Width - widthText - bounds.X) / 2d;
+
+                    var topText =
+                        model.KeyStrokesVerticalAlignment == VerticalAlignment.Top ? model.KeyStrokesMargin - bounds.Y :
+                        model.KeyStrokesVerticalAlignment == VerticalAlignment.Bottom ? image.Height - heightText - bounds.Y - model.KeyStrokesMargin :
+                        (image.Height - heightText) / 2d - bounds.Y;
+
+                    var widthRectangle = model.KeyStrokesHorizontalAlignment == HorizontalAlignment.Stretch ? image.Width - model.KeyStrokesMargin * 2 : widthText;
+                    var heightRectangle = model.KeyStrokesVerticalAlignment == VerticalAlignment.Stretch ? image.Height - model.KeyStrokesMargin * 2 : Math.Max(heightText, model.KeyStrokesMinHeight);
+
+                    //Center text when setting minimum height.
+                    var minHeightAdjustment = model.KeyStrokesMinHeight > heightText && model.KeyStrokesVerticalAlignment != VerticalAlignment.Center && model.KeyStrokesVerticalAlignment != VerticalAlignment.Stretch ?
+                        ((model.KeyStrokesMinHeight - heightText) / 2d) * (model.KeyStrokesVerticalAlignment == VerticalAlignment.Bottom ? -1 : 1) : 0;
+
+                    var minHeightAdjustmentRectangle = model.KeyStrokesMinHeight > heightText && model.KeyStrokesVerticalAlignment == VerticalAlignment.Center ? ((model.KeyStrokesMinHeight - heightText) / 2d) : 0;
+
+                    var leftRectangle =
+                        model.KeyStrokesHorizontalAlignment == HorizontalAlignment.Stretch ? model.KeyStrokesMargin :
+                        leftText + bounds.X < model.KeyStrokesMargin ? model.KeyStrokesMargin : leftText + bounds.X;
+
+                    var topRectangle =
+                        model.KeyStrokesVerticalAlignment == VerticalAlignment.Stretch || model.KeyStrokesVerticalAlignment == VerticalAlignment.Top ? model.KeyStrokesMargin :
+                        model.KeyStrokesVerticalAlignment == VerticalAlignment.Bottom ? image.Height - heightRectangle - model.KeyStrokesMargin :
+                        topText + bounds.Y < model.KeyStrokesMargin ? model.KeyStrokesMargin : topText + bounds.Y - minHeightAdjustmentRectangle;
+
+                    geometry.Transform = new TranslateTransform(Math.Round(leftText + model.KeyStrokesPadding, 0), Math.Round(topText + model.KeyStrokesPadding + minHeightAdjustment, 0));
+
+                    //Draws everything in order, the image, the rectangle and the text.
                     drawingContext.DrawImage(image, new Rect(0, 0, image.Width, image.Height));
-                    drawingContext.DrawImage(render, new Rect(0, 0, render.Width, render.Height));
+                    drawingContext.DrawRectangle(new SolidColorBrush(model.KeyStrokesBackgroundColor), null, new Rect(Math.Round(leftRectangle, 0), Math.Round(topRectangle, 0), Math.Round(widthRectangle, 0), Math.Round(heightRectangle, 0)));
+
+                    //This code will draw the outline outside the text. 
+                    if (UserSettings.All.DrawOutlineOutside)
+                    {
+                        drawingContext.DrawGeometry(null, pen, geometry);
+                        drawingContext.DrawGeometry(new SolidColorBrush(model.KeyStrokesFontColor), null, geometry);
+                    }
+                    else
+                        drawingContext.DrawGeometry(new SolidColorBrush(model.KeyStrokesFontColor), pen, geometry);
                 }
 
-                // Converts the Visual (DrawingVisual) into a BitmapSource
-                var bmp = new RenderTargetBitmap(image.PixelWidth, image.PixelHeight, dpi, dpi, PixelFormats.Pbgra32);
+                //Converts the Visual (DrawingVisual) into a BitmapSource.
+                var bmp = new RenderTargetBitmap(image.PixelWidth, image.PixelHeight, ZoomBoxControl.ImageDpi, ZoomBoxControl.ImageDpi, PixelFormats.Pbgra32);
                 bmp.Render(drawingVisual);
 
-                // Creates a PngBitmapEncoder and adds the BitmapSource to the frames of the encoder
+                //Creates a PngBitmapEncoder and adds the BitmapSource to the frames of the encoder.
                 var encoder = new PngBitmapEncoder();
                 encoder.Frames.Add(BitmapFrame.Create(bmp));
 
-                // Saves the image into a file using the encoder
+                //Saves the image into a file using the encoder.
                 using (Stream stream = File.Create(frame.Path))
                     encoder.Save(stream);
 
-                //GC.Collect(1);
                 GC.WaitForPendingFinalizers();
                 GC.Collect(1);
 
@@ -4764,6 +7007,251 @@ namespace ScreenToGif.Windows
         private void KeyStrokesCallback(IAsyncResult ar)
         {
             _keyStrokesDelegate.EndInvoke(ar);
+
+            Dispatcher.Invoke(() =>
+            {
+                LoadSelectedStarter(0, Project.Frames.Count - 1);
+            });
+        }
+
+        #endregion
+
+        #region Async Border
+
+        private delegate void BorderDelegate(BorderModel model);
+
+        private BorderDelegate _borderDelegate;
+
+        private void BorderAsync(BorderModel model)
+        {
+            Dispatcher?.Invoke(() =>
+            {
+                IsLoading = true;
+            });
+
+            ShowProgress(DispatcherStringResource("Editor.ApplyingOverlay"), Project.Frames.Count);
+
+            var frames = model.LeftThickness < 0 || model.TopThickness < 0 || model.RightThickness < 0 || model.BottomThickness < 0 ? Project.Frames : SelectedFrames();
+            var scale = Math.Round(ZoomBoxControl.ImageDpi / 96d, 2); //ZoomBoxControl.ImageScale;
+
+            //Since there could be a difference in the DPI of the UI vs the one from the image, I need to adjust the scale of the thickness.
+            var leftThick = model.LeftThickness * ZoomBoxControl.ScaleDiff;
+            var topThick = model.TopThickness * ZoomBoxControl.ScaleDiff;
+            var rightThick = model.RightThickness * ZoomBoxControl.ScaleDiff;
+            var bottomThick = model.BottomThickness * ZoomBoxControl.ScaleDiff;
+
+            var count = 0;
+            foreach (var frame in frames)
+            {
+                var image = frame.Path.SourceFrom();
+                var drawingVisual = new DrawingVisual();
+
+                using (var drawingContext = drawingVisual.RenderOpen())
+                {
+                    #region Draws the white rectangle behind with full size
+
+                    var marginHorizontal = Math.Abs((int)Math.Min(leftThick, 0) + Math.Min(rightThick, 0)); //Left and right negative margins as a positive number.
+                    var marginVertical = Math.Abs((int)Math.Min(topThick, 0) + Math.Min(bottomThick, 0)); //Top and bottom negative margins as a positive number.
+
+                    drawingContext.DrawRectangle(Brushes.White, null, new Rect(0, 0, image.Width + marginHorizontal, image.Height + marginVertical));
+
+                    #endregion
+
+                    #region Draws the image with the top-left margin
+
+                    var marginLeft = (int)Math.Abs(Math.Min(leftThick, 0)); //Left negative margin as a positive number.
+                    var marginTop = (int)Math.Abs(Math.Min(topThick, 0)); //Right negative margin as a positive number.
+
+                    drawingContext.DrawImage(image, new Rect(marginLeft, marginTop, image.Width, image.Height));
+
+                    #endregion
+
+                    #region Draws the 4 lines
+
+                    //The lines are centrally aligned, so they must be drawn at thickness / 2.
+                    var brush = new SolidColorBrush(model.Color);
+
+                    var height = image.Height + marginVertical;
+                    var width = image.Width + marginLeft - (rightThick > 0 ? rightThick : 0); //image.Width + width / 2d - trueRight / 2d
+
+                    //Left border.
+                    var xLeft = Math.Abs(leftThick) / 2d;
+                    drawingContext.DrawLine(new Pen(brush, Math.Abs(leftThick)), new Point(xLeft, 0), new Point(xLeft, height));
+
+                    //Right border.
+                    var xRight = (leftThick < 0 ? leftThick * -1 : 0) + image.Width + (Math.Abs(rightThick) / 2d * (rightThick < 0 ? 1 : -1));
+                    drawingContext.DrawLine(new Pen(brush, Math.Abs(rightThick)), new Point(xRight, 0), new Point(xRight, height));
+
+                    //Top border.
+                    var xTop = Math.Abs(leftThick);
+                    var yTop = Math.Abs(topThick) / 2d;
+                    drawingContext.DrawLine(new Pen(brush, Math.Abs(topThick)), new Point(xTop, yTop), new Point(width, yTop));
+
+                    //Bottom border.
+                    var yBottom = (topThick < 0 ? topThick * -1 : 0) + image.Height + (Math.Abs(bottomThick) / 2d * (bottomThick < 0 ? 1 : -1));
+                    drawingContext.DrawLine(new Pen(brush, Math.Abs(bottomThick)), new Point(xTop, yBottom), new Point(width, yBottom));
+
+                    #endregion
+                }
+
+                var frameHeight = image.PixelHeight + (int)(Math.Round((topThick < 0 ? Math.Abs(topThick) : 0) + (bottomThick < 0 ? Math.Abs(bottomThick) : 0), 0) * scale);
+                var frameWidth = image.PixelWidth + (int)(Math.Round((leftThick < 0 ? Math.Abs(leftThick) : 0) + (rightThick < 0 ? Math.Abs(rightThick) : 0), 0) * scale);
+
+                //Converts the Visual (DrawingVisual) into a BitmapSource.
+                var bmp = new RenderTargetBitmap(frameWidth, frameHeight, ZoomBoxControl.ImageDpi, ZoomBoxControl.ImageDpi, PixelFormats.Pbgra32);
+                bmp.Render(drawingVisual);
+
+                //Creates a PngBitmapEncoder and adds the BitmapSource to the frames of the encoder.
+                var encoder = new PngBitmapEncoder();
+                encoder.Frames.Add(BitmapFrame.Create(bmp));
+
+                //Saves the image into a file using the encoder.
+                using (Stream stream = File.Create(frame.Path))
+                    encoder.Save(stream);
+
+                UpdateProgress(count++);
+            }
+        }
+
+        private void BorderCallback(IAsyncResult ar)
+        {
+            _borderDelegate.EndInvoke(ar);
+
+            Dispatcher.Invoke(() =>
+            {
+                LoadSelectedStarter(0, Project.Frames.Count - 1);
+            });
+        }
+
+        #endregion
+
+        #region Async Shadow
+
+        private delegate void ShadowDelegate(ShadowModel model);
+
+        private ShadowDelegate _shadowDelegate;
+
+        private void ShadowAsync(ShadowModel model)
+        {
+            Dispatcher?.Invoke(() =>
+            {
+                IsLoading = true;
+            });
+
+            ShowProgress(DispatcherStringResource("Editor.ApplyingOverlay"), Project.Frames.Count);
+
+            var scale = Math.Round(ZoomBoxControl.ImageDpi / 96d, 2); //ZoomBoxControl.ImageScale;
+            var blur = model.BlurRadius * ZoomBoxControl.ScaleDiff;
+            var depth = model.Depth * ZoomBoxControl.ScaleDiff;
+
+            var count = 0;
+            foreach (var frame in Project.Frames)
+            {
+                var image = frame.Path.SourceFrom();
+                var drawingVisual = new DrawingVisual();
+
+                //Sizes:
+                var frameHeight = 0;
+                var frameWidth = 0;
+
+                drawingVisual.Effect = new DropShadowEffect
+                {
+                    Color = model.Color,
+                    BlurRadius = model.BlurRadius * ZoomBoxControl.ScaleDiff,
+                    Opacity = model.Opacity,
+                    Direction = model.Direction,
+                    ShadowDepth = model.Depth * ZoomBoxControl.ScaleDiff,
+                    RenderingBias = RenderingBias.Quality
+                };
+
+                //Draws image with shadow.
+                using (var drawingContext = drawingVisual.RenderOpen())
+                {
+                    //https://upload.wikimedia.org/wikipedia/commons/thumb/f/fe/Sin_Cos_Tan_Cot_unit_circle.svg/1154px-Sin_Cos_Tan_Cot_unit_circle.svg.png
+                    //The cosine of the direction gives the offset of the X axis based on the Width/2 of the point where the circle line crosses the line coming from the center of the circle.
+                    //The sine of the direction gives the offset of the Y axis based on the Height/2 of the point where the circle line crosses the line coming from the center of the circle.
+
+                    //• Cosine:
+                    //Negative: to the left.
+                    //Positive: to the right.
+                    //• Sine:
+                    //Positive: to the top.
+                    //Negative: to the bottom.
+
+                    //<- 180°, 3.14rad
+                    //L: Blur + Depth
+                    //T: Blur
+                    //R: Math.Max(Blur - Depth, 0) //If the depth is lower than the blur radius, a bit of shadow will appear at the side.
+                    //B: Blur
+
+                    //-> 0°, 0rad
+                    //L: Math.Max(Blur - Depth, 0) //If the depth is lower than the blur radius, a bit of shadow will appear at the side.
+                    //T: Blur
+                    //R: Blur + Depth
+                    //B: Blur
+
+                    //^> 45°, 0.78rad
+                    //L: Math.Max(Blur - Depth * ratio, 0) //If the depth is lower than the blur radius, a bit of shadow will appear at the side.
+                    //T: Blur + Depth * ratio
+                    //R: Blur + Depth * ratio
+                    //B: Math.Max(Blur - Depth * ratio, 0) //If the depth is lower than the blur radius, a bit of shadow will appear at the side.
+
+                    //Converts the direction in degrees to radians.
+                    var radians = Math.PI / 180.0 * model.Direction;
+                    var offsetX = depth * Math.Cos(radians);
+                    var offsetY = depth * Math.Sin(radians);
+
+                    var offsetLeft = offsetX < 0 ? offsetX * -1 : 0;
+                    var offsetTop = offsetY > 0 ? offsetY : 0;
+                    var offsetRight = offsetX > 0 ? offsetX : 0;
+                    var offsetBottom = offsetY < 0 ? offsetY * -1 : 0;
+
+                    //Measure drop shadow space.
+                    var marginLeft = offsetLeft > 0 ? offsetLeft + blur / 2d : Math.Max(blur / 2d - offsetLeft, 0); //- offsetX
+                    var marginTop = offsetTop > 0 ? offsetTop + blur / 2d : Math.Max(blur / 2d - offsetTop, 0); //- offsetY
+                    var marginRight = offsetRight > 0 ? offsetRight + blur / 2d : Math.Max(blur / 2d - offsetRight, 0); //+ offsetX
+                    var marginBottom = offsetBottom > 0 ? offsetBottom + blur / 2d : Math.Max(blur / 2d - offsetBottom, 0); //+ offsetY
+
+                    drawingContext.DrawImage(image, new Rect((int)marginLeft, (int)marginTop, image.Width, image.Height));
+
+                    frameHeight = (int)((marginTop + image.Height + marginBottom) * scale);
+                    frameWidth = (int)((marginLeft + image.Width + marginRight) * scale);
+                }
+
+                //Converts the Visual (DrawingVisual) into a BitmapSource.
+                var innerBmp = new RenderTargetBitmap(frameWidth, frameHeight, ZoomBoxControl.ImageDpi, ZoomBoxControl.ImageDpi, PixelFormats.Pbgra32);
+                innerBmp.Render(drawingVisual);
+
+                //Draws background and rendered image on top.
+                drawingVisual = new DrawingVisual();
+                using (var drawingContext = drawingVisual.RenderOpen())
+                {
+                    //Draws the background of the image.
+                    drawingContext.DrawRectangle(new SolidColorBrush(model.BackgroundColor), null, new Rect(0, 0, innerBmp.Width, innerBmp.Height));
+
+                    //Image, already with the shadow.
+                    drawingContext.DrawImage(innerBmp, new Rect(0, 0, innerBmp.Width, innerBmp.Height));
+                }
+
+                //Converts the Visual (DrawingVisual) into a BitmapSource.
+                var bmp = new RenderTargetBitmap(frameWidth, frameHeight, ZoomBoxControl.ImageDpi, ZoomBoxControl.ImageDpi, PixelFormats.Pbgra32);
+                bmp.Render(drawingVisual);
+
+                //Creates a PngBitmapEncoder and adds the BitmapSource to the frames of the encoder.
+                var encoder = new PngBitmapEncoder();
+                encoder.Frames.Add(BitmapFrame.Create(bmp));
+
+                //Saves the image into a file using the encoder.
+                using (Stream stream = File.Create(frame.Path))
+                    encoder.Save(stream);
+
+                UpdateProgress(count++);
+            }
+        }
+
+        private void ShadowCallback(IAsyncResult ar)
+        {
+            _shadowDelegate.EndInvoke(ar);
 
             Dispatcher.Invoke(() =>
             {
@@ -4840,29 +7328,65 @@ namespace ScreenToGif.Windows
 
         #endregion
 
-        #region Async Remove
+        #region Async Reduce Frames
 
-        private delegate void ReduceFrame(int factor, int removeCount);
+        private delegate void ReduceFrame(List<int> selection, int factor, int removeCount, ReduceDelayType mode);
 
         private ReduceFrame _reduceFrameDel;
 
-        private void ReduceFrameCount(int factor, int removeCount)
+        private void ReduceFrameCount(List<int> selection, int factor, int removeCount, ReduceDelayType mode)
         {
             var removeList = new List<int>();
 
             //Gets the list of frames to be removed.
-            for (var i = factor - 1; i < Project.Frames.Count - 1; i += factor + removeCount)
-                removeList.AddRange(Util.Other.CreateIndexList2(i + 1, removeCount));
+            for (var i = selection.Min() + factor - 1; i < selection.Min() + selection.Count - 1; i += factor + removeCount)
+                removeList.AddRange(Util.Other.ListOfIndexes(i + 1, removeCount));
+            
+            //Only allow removing frames within the possible range.
+            removeList = removeList.Where(x => x < Project.Frames.Count).ToList();
 
-            var alterList = (from item in removeList where item - 1 >= 0 select item - 1).ToList(); //.Union(removeList)
+            var alterList = mode == ReduceDelayType.Evenly ? Util.Other.ListOfIndexes(0, Project.Frames.Count).Where(w => !removeList.Contains(w)).ToList() : 
+                mode == ReduceDelayType.Previous ? (from item in removeList where item - 1 >= 0 select item - 1).ToList() : //.Union(removeList)
+                new List<int>(); //No other frame will be altered if the delay is not adjusted.
 
-            ActionStack.SaveState(ActionStack.EditAction.RemoveAndAlter, Project.Frames, removeList, alterList);
+            if (alterList.Any())
+                ActionStack.SaveState(ActionStack.EditAction.RemoveAndAlter, Project.Frames, removeList, alterList);
+            else
+                ActionStack.SaveState(ActionStack.EditAction.Remove, Project.Frames, removeList);
 
+            var delayRemoved = 0;
             for (var i = removeList.Count - 1; i >= 0; i--)
             {
                 var removeIndex = removeList[i];
 
-                Project.Frames[removeIndex - 1].Delay += Project.Frames[removeIndex].Delay;
+                if (mode == ReduceDelayType.Previous || factor == 1)
+                {
+                    //Simply stacks the delay of the removed frames to the previous frame;
+                    Project.Frames[removeIndex - 1].Delay += Project.Frames[removeIndex].Delay;
+                }
+                else if (mode == ReduceDelayType.Evenly)
+                {
+                    if (i == removeList.Count - 1 || removeList[i] + 1 == removeList[i + 1])
+                    {
+                        //Store the delay of the frames being removed.
+                        delayRemoved += Project.Frames[removeIndex].Delay;
+                    }
+                    else
+                    {
+                        if (delayRemoved > 0)
+                        {
+                            //Calculate the size of the remaining section (this is the factor, the number of frames not being removed in each section).
+                            var size = removeList[i + 1] - removeList[i] - 1;
+
+                            //Spread evenly the accumulated delay among the remaining frames.
+                            for (var r = removeList[i + 1] - 1; r > removeList[i]; r--)
+                                Project.Frames[r].Delay += delayRemoved / size; //Some information may be lost due to rounding.
+                        }
+
+                        //Start again the accumulation for this block of frames being removed.
+                        delayRemoved = Project.Frames[removeIndex].Delay;
+                    }
+                }                
 
                 File.Delete(Project.Frames[removeIndex].Path);
                 Project.Frames.RemoveAt(removeIndex);
@@ -4876,15 +7400,132 @@ namespace ScreenToGif.Windows
             Dispatcher.Invoke(() =>
             {
                 for (var i = FrameListView.Items.Count - 1; i >= Project.Frames.Count; i--)
-                {
                     FrameListView.Items.RemoveAt(i);
-                }
 
                 SelectNear(LastSelected);
+                Project.Persist();
 
+                //TODO: Load from the start.
                 LoadSelectedStarter(ReduceFactorIntegerUpDown.Value - 1, Project.Frames.Count - 1);
 
-                ShowHint("Hint.Reduce");
+                ShowHint("S.Hint.Reduce");
+            });
+        }
+
+        #endregion
+
+        #region Async Remove Duplicates
+
+        private delegate int RemoveDuplicates(double similarity, DuplicatesRemovalType removal, DuplicatesDelayType delay);
+
+        private RemoveDuplicates _removeDuplicatesDel;
+
+        private int RemoveDuplicatesAsync(double similarity, DuplicatesRemovalType removal, DuplicatesDelayType delay)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                IsLoading = true;
+                Cursor = Cursors.AppStarting;
+            });
+
+            var removeList = new List<int>();
+            var alterList = new List<int>();
+
+            ShowProgress(DispatcherStringResource("S.Editor.AnalyzingDuplicates"), Project.Frames.Count - 1);
+
+            //Gets the list of similar frames.
+            for (var i = 0; i < Project.Frames.Count - 2; i++)
+            {
+                var sim = ImageMethods.CalculateDifference(Project.Frames[i], Project.Frames[i + 1]);
+
+                if (sim >= similarity)
+                    removeList.Add(removal == DuplicatesRemovalType.First ? i : i + 1);
+
+                UpdateProgress(i + 1);
+            }
+
+            if (removeList.Count == 0)
+            {
+                //TODO: Nothing being removed. I need to warn the user.
+                return Project.Frames.Count;
+            }
+
+            var count = 0;
+            if (delay != DuplicatesDelayType.DontAdjust)
+            {
+                ShowProgress(DispatcherStringResource("S.Editor.AdjustingDuplicatesDelay"), removeList.Count);
+
+                //Gets the list of frames that will be altered (if the delay will be adjusted).
+                var mode = removal == DuplicatesRemovalType.First ? 1 : -1;
+                alterList = (from item in removeList where item + mode >= 0 select item + mode).ToList();
+
+                ActionStack.SaveState(ActionStack.EditAction.RemoveAndAlter, Project.Frames, removeList, alterList);
+
+                if (removal == DuplicatesRemovalType.Last)
+                {
+                    for (var i = alterList.Count - 1; i >= 0; i--)
+                    {
+                        var index = alterList[i];
+
+                        //Sum or average of the delays.
+                        if (delay == DuplicatesDelayType.Sum)
+                            Project.Frames[index].Delay += Project.Frames[index - mode].Delay;
+                        else
+                            Project.Frames[index].Delay = (Project.Frames[index - mode].Delay + Project.Frames[index].Delay) / 2;
+
+                        UpdateProgress(count++);
+                    }
+                }
+                else
+                {
+                    foreach (var index in alterList)
+                    {
+                        //Sum or average of the delays.
+                        if (delay == DuplicatesDelayType.Sum)
+                            Project.Frames[index].Delay += Project.Frames[index - mode].Delay;
+                        else
+                            Project.Frames[index].Delay = (Project.Frames[index - mode].Delay + Project.Frames[index].Delay) / 2;
+
+                        UpdateProgress(count++);
+                    }
+                }
+            }
+            else
+            {
+                ActionStack.SaveState(ActionStack.EditAction.Remove, Project.Frames, removeList);
+            }
+
+            ShowProgress(DispatcherStringResource("S.Editor.DiscardingDuplicates"), removeList.Count);
+
+            for (var i = removeList.Count - 1; i >= 0; i--)
+            {
+                var removeIndex = removeList[i];
+
+                File.Delete(Project.Frames[removeIndex].Path);
+                Project.Frames.RemoveAt(removeIndex);
+
+                UpdateProgress(count++);
+            }
+
+            //Gets the minimum index being altered.
+            return alterList.Count == 0 && removeList.Count == 0 ? Project.Frames.Count : alterList.Count > 0 ? Math.Min(removeList.Min(), alterList.Min()) : removeList.Min();
+        }
+
+        private void RemoveDuplicatesCallback(IAsyncResult ar)
+        {
+            var index = _removeDuplicatesDel.EndInvoke(ar);
+
+            Dispatcher.Invoke(() =>
+            {
+                for (var i = FrameListView.Items.Count - 1; i >= Project.Frames.Count; i--)
+                    FrameListView.Items.RemoveAt(i);
+
+                SelectNear(LastSelected);
+                Project.Persist();
+
+                LoadSelectedStarter(index, Project.Frames.Count - 1);
+
+                ShowHint("S.Hint.Duplicates");
             });
         }
 
@@ -4892,13 +7533,13 @@ namespace ScreenToGif.Windows
 
         #region Async Delay
 
-        private delegate void DelayFrames(DelayChangeType type, int delay);
+        private delegate void DelayFrames(DelayModel model, bool forAll = false, bool ignoreUi = false);
 
         private DelayFrames _delayFramesDel;
 
-        private void Delay(DelayChangeType type, int delay)
+        private void DelayAsync(DelayModel model, bool forAll = false, bool ignoreUi = false)
         {
-            var frameList = SelectedFrames();
+            var frameList = forAll ? Project.Frames : SelectedFrames();
 
             Dispatcher.Invoke(() =>
             {
@@ -4911,27 +7552,45 @@ namespace ScreenToGif.Windows
             var count = 0;
             foreach (var frameInfo in frameList)
             {
-                if (type == DelayChangeType.Override)
+                switch (model.Type)
                 {
-                    frameInfo.Delay = delay;
-                }
-                else
-                {
-                    frameInfo.Delay += delay;
+                    case DelayUpdateType.Override:
+                    {
+                        frameInfo.Delay = model.NewDelay;
+                        break;
+                    }
+                    case DelayUpdateType.IncreaseDecrease:
+                    {
+                        frameInfo.Delay += model.IncreaseDecreaseDelay;
 
-                    if (frameInfo.Delay < 10)
-                        frameInfo.Delay = 10;
+                        if (frameInfo.Delay < 10)
+                            frameInfo.Delay = 10;
+                        break;
+                    }
+                    default:
+                    {
+                        frameInfo.Delay = (int)Math.Round(frameInfo.Delay * model.Percent / 100m, 0);
+
+                        if (frameInfo.Delay < 10)
+                            frameInfo.Delay = 10;
+                        break;
+                    }
                 }
 
                 #region Update UI
 
-                var index = Project.Frames.IndexOf(frameInfo);
-                Dispatcher.Invoke(() => ((FrameListBoxItem)FrameListView.Items[index]).Delay = frameInfo.Delay);
+                if (!ignoreUi)
+                {
+                    var index = Project.Frames.IndexOf(frameInfo);
+                    Dispatcher.Invoke(() => ((FrameListBoxItem)FrameListView.Items[index]).Delay = frameInfo.Delay);
+                }
 
                 #endregion
 
                 UpdateProgress(count++);
             }
+
+            Project.Persist();
         }
 
         private void DelayCallback(IAsyncResult ar)
@@ -4942,10 +7601,11 @@ namespace ScreenToGif.Windows
             {
                 Cursor = Cursors.Arrow;
 
+                UpdateStatistics();
                 HideProgress();
                 IsLoading = false;
 
-                ShowHint("Hint.Delay");
+                ShowHint("S.Hint.Delay");
 
                 CommandManager.InvalidateRequerySuggested();
                 SetFocusOnCurrentFrame();
@@ -4966,8 +7626,8 @@ namespace ScreenToGif.Windows
 
             Dispatcher.Invoke(() => IsLoading = true);
 
-            //Calculate opacity increment.
-            var increment = 1F / (frameCount + 1);
+            //Calculate opacity increment. When fading to a color, it will add a frame with a 100% opacity at the end. 
+            var increment = 1F / (frameCount + (UserSettings.All.FadeToType == FadeToType.NextFrame ? 1 : 0));
             var previousName = Path.GetFileNameWithoutExtension(Project.Frames[selected].Path);
             var previousFolder = Path.GetDirectoryName(Project.Frames[selected].Path);
 
@@ -4976,7 +7636,6 @@ namespace ScreenToGif.Windows
             //var size = Dispatcher.Invoke(() => FrameSize);
             var dpi = Dispatcher.Invoke(this.Dpi);
 
-            //TODO: Check with high dpi. Also with image dpi that is different from the screen
             var previousImage = Project.Frames[selected].Path.SourceFrom();
             var nextImage = UserSettings.All.FadeToType == FadeToType.NextFrame ? Project.Frames[Project.Frames.Count - 1 == selected ? 0 : selected + 1].Path.SourceFrom() :
                 ImageMethods.CreateEmtpyBitmapSource(UserSettings.All.FadeToColor, previousImage.PixelWidth, previousImage.PixelHeight, dpi, PixelFormats.Indexed1);
@@ -5004,7 +7663,7 @@ namespace ScreenToGif.Windows
                     drawingContext.DrawRectangle(nextBrush, null, new Rect(0, 0, nextImage.Width, nextImage.Height));
                 }
 
-                // Converts the Visual (DrawingVisual) into a BitmapSource
+                //Converts the Visual (DrawingVisual) into a BitmapSource.
                 var bmp = new RenderTargetBitmap(previousImage.PixelWidth, previousImage.PixelHeight, previousImage.DpiX, previousImage.DpiY, PixelFormats.Pbgra32);
                 bmp.Render(drawingVisual);
 
@@ -5012,14 +7671,15 @@ namespace ScreenToGif.Windows
                 nextBrush.Opacity += increment;
 
                 //TODO: Fix filenaming.
+                //TODO: This transition doesn't preserve any other frame info, such as keys pressed and mouse clicks.
                 var fileName = Path.Combine(previousFolder, $"{previousName} T {index} {DateTime.Now:hh-mm-ss fff}.png");
-                Project.Frames.Insert(selected + index + 1, new FrameInfo(fileName, 66));
+                Project.Frames.Insert(selected + index + 1, new FrameInfo(fileName, UserSettings.All.FadeTransitionDelay));
 
-                // Creates a PngBitmapEncoder and adds the BitmapSource to the frames of the encoder
+                //Creates a PngBitmapEncoder and adds the BitmapSource to the frames of the encoder.
                 var encoder = new PngBitmapEncoder();
                 encoder.Frames.Add(BitmapFrame.Create(bmp));
 
-                // Saves the image into a file using the encoder
+                //Saves the image into a file using the encoder.
                 using (Stream stream = File.Create(fileName))
                     encoder.Save(stream);
 
@@ -5084,8 +7744,9 @@ namespace ScreenToGif.Windows
                 nextBrush.Opacity += alphaIncrement;
 
                 //TODO: Fix filenaming.
+                //TODO: This transition doesn't preserve any other frame info, such as keys pressed and mouse clicks.
                 var fileName = Path.Combine(previousFolder, $"{previousName} T {index} {DateTime.Now:hh-mm-ss fff}.png");
-                Project.Frames.Insert(selected + index + 1, new FrameInfo(fileName, 66));
+                Project.Frames.Insert(selected + index + 1, new FrameInfo(fileName, UserSettings.All.FadeTransitionDelay));
 
                 // Creates a PngBitmapEncoder and adds the BitmapSource to the frames of the encoder
                 var encoder = new PngBitmapEncoder();
@@ -5100,7 +7761,6 @@ namespace ScreenToGif.Windows
 
             #endregion
 
-
             return selected;
         }
 
@@ -5112,219 +7772,149 @@ namespace ScreenToGif.Windows
             {
                 LoadSelectedStarter(selected, Project.Frames.Count - 1);
 
-                ShowHint("Hint.Transition");
+                ShowHint("S.Hint.Transition");
             });
         }
 
         #endregion
 
-        #region Other
+        #region Async Obfuscate
 
-        private void DeleteFrame(int index)
+        private delegate List<int> ObfuscateFrames(Rect rect, int pixelSize, bool useMedian, double dpi, double screenDpi, bool forAll = false);
+
+        private ObfuscateFrames _obfuscateFramesDel;
+
+        private List<int> ObfuscateAsync(Rect rect, int pixelSize, bool useMedian, double dpi, double screenScale, bool forAll = false)
         {
-            //Delete the File from the disk.
-            File.Delete(Project.Frames[index].Path);
-
-            //Remove from the list.
-            Project.Frames.RemoveAt(index);
-            FrameListView.Items.RemoveAt(index);
-        }
-
-        private List<FrameInfo> SelectedFrames()
-        {
-            var selectedIndexList = Dispatcher.Invoke(SelectedFramesIndex);
-            return Project.Frames.Where(x => selectedIndexList.Contains(Project.Frames.IndexOf(x))).ToList();
-        }
-
-        private string StringResource(string key)
-        {
-            return FindResource(key).ToString().Replace("\n", " ").Replace("\\n", " ").Replace("\r", " ").Replace("&#10;", " ").Replace("&#x0d;", " ");
-        }
-
-        private string DispatcherStringResource(string key)
-        {
-            return Dispatcher.Invoke(() => FindResource(key).ToString().Replace("\n", " ").Replace("\\n", " ").Replace("\r", " ").Replace("&#10;", " ").Replace("&#x0d;", " "));
-        }
-
-        private void ChangeFileNumber(int change)
-        {
-            //If there's no filename declared, show the default one.
-            if (string.IsNullOrWhiteSpace(UserSettings.All.LatestFilename))
+            var frameList = forAll ? Project.Frames : SelectedFrames();
+            var selectedList = Dispatcher.Invoke(() =>
             {
-                UserSettings.All.LatestFilename = FindResource("S.SaveAs.File.Animation") as string;
-                return;
-            }
+                IsLoading = true;
 
-            var index = UserSettings.All.LatestFilename.Length;
-            int start = -1, end = -1;
+                return forAll ? Project.Frames.Select(x => Project.Frames.IndexOf(x)).ToList() : SelectedFramesIndex();
+            });
 
-            //Detects the last number in a string.
-            foreach (var c in UserSettings.All.LatestFilename.Reverse())
+            ShowProgress(DispatcherStringResource("Editor.ApplyingOverlay"), frameList.Count);
+
+            var size = frameList[0].Path.ScaledSize();
+
+            rect = rect.Scale(screenScale).Limit(size.Width, size.Height);
+
+            var count = 0;
+            foreach (var frame in frameList)
             {
-                if (char.IsNumber(c))
+                var image = frame.Path.SourceFrom();
+                var render = ImageMethods.Pixelate(image, new Int32Rect((int)(rect.X + 1d * screenScale), (int)(rect.Y + 1 * screenScale),
+                    (int)(rect.Width - 1 * screenScale), (int)(rect.Height - 1 * screenScale)), pixelSize, useMedian);
+
+                var drawingVisual = new DrawingVisual();
+                using (var drawingContext = drawingVisual.RenderOpen())
                 {
-                    if (end == -1)
-                        end = index;
-
-                    start = index - 1;
+                    drawingContext.DrawImage(image, new Rect(0, 0, image.Width, image.Height));
+                    drawingContext.DrawImage(render, new Rect((rect.X + 1d) / screenScale * ZoomBoxControl.ScaleDiff, (rect.Y + 1d) / screenScale * ZoomBoxControl.ScaleDiff, render.Width, render.Height));
                 }
-                else if (start == index)
-                    break;
 
-                index--;
+                //Converts the Visual (DrawingVisual) into a BitmapSource.
+                var bmp = new RenderTargetBitmap(image.PixelWidth, image.PixelHeight, dpi, dpi, PixelFormats.Pbgra32);
+                bmp.Render(drawingVisual);
+
+                //Creates a PngBitmapEncoder and adds the BitmapSource to the frames of the encoder.
+                var encoder = new PngBitmapEncoder();
+                encoder.Frames.Add(BitmapFrame.Create(bmp));
+
+                //Saves the image into a file using the encoder.
+                using (Stream stream = File.Create(frame.Path))
+                    encoder.Save(stream);
+
+                UpdateProgress(count++);
             }
 
-            //If there's no number.
-            if (end == -1)
+            return selectedList;
+        }
+
+        private void ObfuscateCallback(IAsyncResult ar)
+        {
+            var selected = _obfuscateFramesDel.EndInvoke(ar);
+
+            Dispatcher.Invoke(() =>
             {
-                UserSettings.All.LatestFilename += $" ({change})";
-                return;
-            }
+                ShowHint("S.Hint.Overlay");
 
-            //If it's a negative number, include the signal.
-            if (start > 0 && UserSettings.All.LatestFilename.Substring(start - 1, 1).Equals("-"))
-                start--;
+                LoadSelectedStarter(selected.Min(), selected.Max());
+            });
+        }
 
-            //Cut, convert, merge.
-            int number;
-            if (int.TryParse(UserSettings.All.LatestFilename.Substring(start, end - start), out number))
+        #endregion
+
+        #region Async Mouse Clicks
+
+        private delegate void MouseClicksDelegate(MouseClicksModel model);
+
+        private MouseClicksDelegate _mouseClicksDelegate;
+
+        private void MouseClicksAsync(MouseClicksModel model)
+        {
+            Dispatcher.Invoke(() =>
             {
-                var offset = start + number.ToString().Length;
+                IsLoading = true;
+            });
 
-                UserSettings.All.LatestFilename = UserSettings.All.LatestFilename.Substring(0, start) + (number + change) +
-                    UserSettings.All.LatestFilename.Substring(offset, UserSettings.All.LatestFilename.Length - end);
-            }
-        }
+            ShowProgress(DispatcherStringResource("Editor.ApplyingOverlay"), Project.Frames.Count);
 
-        private void UpdateStatistics()
-        {
-            TotalDuration = TimeSpan.FromMilliseconds(Project.Frames.Sum(x => x.Delay));
-            FrameSize = Project.Frames.Count > 0 ? Project.Frames[0].Path.ScaledSize() : new Size(0, 0);
-            FrameScale = Project.Frames.Count > 0 ? Convert.ToInt32(Project.Frames[0].Path.DpiOf() / 96d * 100d) : 0;
-            AverageDelay = Project.Frames.Count > 0 ? Project.Frames.Average(x => x.Delay) : 0;
-        }
+            var auxList = Project.Frames.CopyList();
 
-        private void RemoveAdorners()
-        {
-            #region Remove adorners
-
-            var adornerLayer = AdornerLayer.GetAdornerLayer(WatermarkImage);
-
-            //Remove all the adorners.
-            foreach (var adorner in (adornerLayer.GetAdorners(WatermarkImage) ?? new Adorner[0]).OfType<ResizingAdorner>())
+            var count = 0;
+            foreach (var frame in auxList)
             {
-                adorner.Destroy();
-                adornerLayer.Remove(adorner);
-            }
+                if (!frame.WasClicked || frame.CursorX == int.MinValue)
+                {
+                    UpdateProgress(count++);
+                    continue;
+                }
 
-            #endregion
+                var image = frame.Path.SourceFrom();
+                var scale = Math.Round(image.DpiX / 96d, 2);
+
+                var drawingVisual = new DrawingVisual();
+                using (var drawingContext = drawingVisual.RenderOpen())
+                {
+                    drawingContext.DrawImage(image, new Rect(0, 0, image.Width, image.Height)); // - UserSettings.All.MouseClicksWidth/2d   // - UserSettings.All.MouseClicksHeight/2d
+                    drawingContext.DrawEllipse(new SolidColorBrush(model.ForegroundColor), null, new System.Windows.Point(frame.CursorX / scale, frame.CursorY / scale), model.Width, model.Height);
+                }
+
+                //KeyStrokesOverlayGrid.GetScaledRender(ZoomBoxControl.ScaleDiff, ZoomBoxControl.ImageDpi, ZoomBoxControl.GetImageSize());
+
+                //Converts the Visual (DrawingVisual) into a BitmapSource.
+                var bmp = new RenderTargetBitmap(image.PixelWidth, image.PixelHeight, image.DpiX, image.DpiY, PixelFormats.Pbgra32);
+                bmp.Render(drawingVisual);
+
+                //Creates a PngBitmapEncoder and adds the BitmapSource to the frames of the encoder.
+                var encoder = new PngBitmapEncoder();
+                encoder.Frames.Add(BitmapFrame.Create(bmp));
+
+                //Saves the image into a file using the encoder.
+                using (Stream stream = File.Create(frame.Path))
+                    encoder.Save(stream);
+
+                GC.WaitForPendingFinalizers();
+                GC.Collect(1);
+
+                UpdateProgress(count++);
+            }
         }
 
-        private void ShowHint(string hint, params object[] values)
+        private void MouseClicksCallback(IAsyncResult ar)
         {
-            if (HintTextBlock.Visibility == Visibility.Visible)
+            _mouseClicksDelegate.EndInvoke(ar);
+
+            Dispatcher.Invoke(() =>
             {
-                BeginStoryboard(FindStoryboard("HideHintStoryboard"), HandoffBehavior.Compose);
-            }
-
-            if (values.Length == 0)
-                HintTextBlock.Text = TryFindResource(hint) + "";
-            else
-                HintTextBlock.Text = string.Format(TryFindResource(hint) + "", values);
-
-            BeginStoryboard(FindStoryboard("ShowHintStoryboard"), HandoffBehavior.Compose);
-        }
-
-        private Storyboard FindStoryboard(string key)
-        {
-            return (Storyboard)TryFindResource(key);
-        }
-
-        private void SetFocusOnCurrentFrame()
-        {
-            FrameListView.Focus();
-
-            var current = FrameListView.SelectedItem as FrameListBoxItem;
-
-            if (current == null)
-                return;
-
-            Keyboard.Focus(current);
-            current.Focus();
-        }
-
-        private void ChangeProgressText(long cumulative, long total, int current)
-        {
-            switch (ProgressPrecisionComboBox.SelectedIndex)
-            {
-                case 0: //Minutes
-                    ProgressHorizontalTextBlock.Text = UserSettings.All.ProgressShowTotal ? TimeSpan.FromMilliseconds(cumulative).ToString(@"m\:ss") + "/" + TimeSpan.FromMilliseconds(total).ToString(@"m\:ss")
-                        : TimeSpan.FromMilliseconds(cumulative).ToString(@"m\:ss");
-                    break;
-                case 1: //Seconds
-                    ProgressHorizontalTextBlock.Text = UserSettings.All.ProgressShowTotal ? (int)TimeSpan.FromMilliseconds(cumulative).TotalSeconds + "/" + TimeSpan.FromMilliseconds(total).TotalSeconds + " s"
-                        : (int)TimeSpan.FromMilliseconds(cumulative).TotalSeconds + " s";
-                    break;
-                case 2: //Milliseconds
-                    ProgressHorizontalTextBlock.Text = UserSettings.All.ProgressShowTotal ? cumulative + "/" + total + " ms" : cumulative + " ms";
-                    break;
-                case 3: //Percentage
-                    var count = (double)Project.Frames.Count;
-                    ProgressHorizontalTextBlock.Text = UserSettings.All.ProgressShowTotal ? (current / count * 100).ToString("##0.#") + "/100%"
-                        : (current / count * 100).ToString("##0.# %");
-                    break;
-                case 4: //Frame number
-                    ProgressHorizontalTextBlock.Text = UserSettings.All.ProgressShowTotal ? current + "/" + Project.Frames.Count
-                        : current.ToString();
-                    break;
-                case 5: //Custom
-                    ProgressHorizontalTextBlock.Text = CustomProgressTextBox.Text
-                        .Replace("$ms", cumulative.ToString())
-                        .Replace("$s", ((int)TimeSpan.FromMilliseconds(cumulative).TotalSeconds).ToString())
-                        .Replace("$m", TimeSpan.FromMilliseconds(cumulative).ToString())
-                        .Replace("$p", (current / (double)Project.Frames.Count * 100).ToString("##0.#"))
-                        .Replace("$f", current.ToString())
-                        .Replace("@ms", total.ToString())
-                        .Replace("@s", ((int)TimeSpan.FromMilliseconds(total).TotalSeconds).ToString())
-                        .Replace("@m", TimeSpan.FromMilliseconds(total).ToString(@"m\:ss"))
-                        .Replace("@p", "100")
-                        .Replace("@f", Project.Frames.Count.ToString());
-                    break;
-            }
-        }
-
-        private void ChangeProgressTextToCurrent()
-        {
-            var total = Project.Frames.Sum(y => y.Delay);
-            var cumulative = 0L;
-
-            for (var j = 0; j < FrameListView.SelectedIndex; j++)
-                cumulative += Project.Frames[j].Delay;
-
-            ChangeProgressText(cumulative, total, FrameListView.SelectedIndex);
+                LoadSelectedStarter(0, Project.Frames.Count - 1);
+            });
         }
 
         #endregion
 
         #endregion
-
-        //public void SaveDrawingToFile(DrawingImage drawing, string fileName, double scale)
-        //{
-        //    var drawingImage = new Image { Source = drawing };
-        //    var width = drawing.Width * scale;
-        //    var height = drawing.Height * scale;
-        //    drawingImage.Arrange(new Rect(0, 0, width, height));
-
-        //    var bitmap = new RenderTargetBitmap((int)width, (int)height, 96, 96, PixelFormats.Pbgra32);
-        //    bitmap.Render(drawingImage);
-
-        //    var encoder = new PngBitmapEncoder();
-        //    encoder.Frames.Add(BitmapFrame.Create(bitmap));
-
-        //    using (var stream = new FileStream(fileName, FileMode.Create))
-        //    {
-        //        encoder.Save(stream);
-        //    }
-        //}
     }
 }

@@ -2,10 +2,12 @@
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using ScreenToGif.Controls;
+using ScreenToGif.ImageUtil.Gif.Encoder;
 using ScreenToGif.Util;
 
-//Code by Nicke Manarin - ScreenToGif - 26/02/2014, Updated 16/10/2016
+//Code by Nicke Manarin - ScreenToGif - 26/02/2014, Updated 16/10/2016, Updated 31/05/2018, Again in 26/09/2019
 
 namespace ScreenToGif.Windows.Other
 {
@@ -24,6 +26,7 @@ namespace ScreenToGif.Windows.Other
 
         private readonly TranslateTransform _markerTransform = new TranslateTransform();
         private Point? _colorPosition;
+        private Size _captureSize;
         private bool _isUpdating = false;
 
         #endregion
@@ -40,6 +43,7 @@ namespace ScreenToGif.Windows.Other
             SelectedColor = selectedColor;
 
             UpdateMarkerPosition(SelectedColor);
+            LastColor.Background = CurrentColor.Background;
 
             ColorMarker.RenderTransform = _markerTransform;
             ColorMarker.RenderTransformOrigin = new Point(0.5, 0.5);
@@ -48,84 +52,12 @@ namespace ScreenToGif.Windows.Other
             {
                 AlphaIntegerUpDown.Visibility = Visibility.Collapsed;
                 AlphaLabel.Visibility = Visibility.Collapsed;
+                ColorHexadecimalBox.DisplayAlpha = false;
+                AlphaSlider.Visibility = Visibility.Collapsed;
+                MinHeight = 350;
             }
 
             InitialColor.Background = CurrentColor.Background = LastColor.Background = new SolidColorBrush(selectedColor);
-        }
-
-        #endregion
-
-        #region Input Events
-
-        private void ValueBox_MouseWheel(object sender, MouseWheelEventArgs e)
-        {
-            var textBox = sender as NumericTextBox;
-
-            if (textBox == null) return;
-
-            textBox.Value = textBox.IsHex ? Convert.ToInt64(textBox.Text.Replace("#",""), 16) : Convert.ToInt32(textBox.Text);
-
-            textBox.Value = e.Delta > 0 ? textBox.Value + 1 : textBox.Value - 1;
-        }
-
-        private void ValueText_LostFocus(object sender, RoutedEventArgs e)
-        {
-            CheckValues(sender);
-        }
-
-        private void ValueText_KeyDown(object sender, KeyEventArgs e)
-        {
-            if (e.Key == Key.Enter)
-            {
-                CheckValues(sender);
-            }
-        }
-
-        private void CheckValues(object sender)
-        {
-            var textBox = sender as NumericTextBox;
-
-            if (textBox == null) return;
-
-            #region If Hexadecimal TextBox
-
-            if (textBox.IsHex)
-            {
-                if (Convert.ToInt64(textBox.Text.Replace("#", ""), 16) > textBox.MaxValue)
-                {
-                    textBox.Value = textBox.MaxValue;
-                    return;
-                }
-
-                if (Convert.ToInt64(textBox.Text.Replace("#", ""), 16) < textBox.MinValue)
-                {
-                    textBox.Value = textBox.MinValue;
-                    return;
-                }
-
-                textBox.Value = Convert.ToInt64(textBox.Text.Replace("#", ""), 16);
-                return;
-            }
-
-            #endregion
-
-            #region If Decimal
-
-            if (Convert.ToInt32(textBox.Text) > textBox.MaxValue)
-            {
-                textBox.Value = textBox.MaxValue;
-                return;
-            }
-
-            if (Convert.ToInt32(textBox.Text) < textBox.MinValue)
-            {
-                textBox.Value = textBox.MinValue;
-                return;
-            }
-
-            textBox.Value = Convert.ToInt32(textBox.Text);
-
-            #endregion
         }
 
         #endregion
@@ -141,33 +73,34 @@ namespace ScreenToGif.Windows.Other
             GreenIntegerUpDown.Value = SelectedColor.G;
             BlueIntegerUpDown.Value = SelectedColor.B;
 
-            HexadecimalTextBox.Text = SelectedColor.ToString();
-
             _isUpdating = false;
         }
 
         private void ColorSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (_colorPosition != null)
-            {
-                DetermineColor((Point)_colorPosition);
-            }
+                DetermineColor((Point) _colorPosition);
         }
-
+        
         private void OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
+            Mouse.Capture(ColorDetail);
             var p = e.GetPosition(ColorDetail);
+
             UpdateMarkerPosition(p);
+            LastColor.Background = CurrentColor.Background;
         }
 
         private void OnMouseMove(object sender, MouseEventArgs e)
         {
-            if (e.LeftButton == MouseButtonState.Pressed)
-            {
-                var p = e.GetPosition(ColorDetail);
-                UpdateMarkerPosition(p);
-                Mouse.Synchronize();
-            }
+            if (e.LeftButton != MouseButtonState.Pressed)
+                return;
+
+            var p = e.GetPosition(ColorDetail);
+            var withinBoundaries = new Point(Math.Max(0, Math.Min(p.X, ColorDetail.ActualWidth)), Math.Max(0, Math.Min(p.Y, ColorDetail.ActualHeight)));
+
+            UpdateMarkerPosition(withinBoundaries);
+            Mouse.Synchronize();
         }
 
         private void ColorDetailSizeChanged(object sender, SizeChangedEventArgs args)
@@ -176,8 +109,9 @@ namespace ScreenToGif.Windows.Other
             {
                 var widthDifference = args.NewSize.Width / args.PreviousSize.Width;
                 var heightDifference = args.NewSize.Height / args.PreviousSize.Height;
-                _markerTransform.X = _markerTransform.X * widthDifference;
-                _markerTransform.Y = _markerTransform.Y * heightDifference;
+
+                _markerTransform.X *= widthDifference;
+                _markerTransform.Y *= heightDifference;
             }
             else if (_colorPosition != null)
             {
@@ -188,17 +122,18 @@ namespace ScreenToGif.Windows.Other
 
         private void ColorDetail_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
+            Mouse.Capture(null); //Release it.
             LastColor.Background = CurrentColor.Background;
         }
 
         private void InitialColor_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
             SelectedColor = ((SolidColorBrush)InitialColor.Background).Color;
-            CurrentColor.Background = LastColor.Background = InitialColor.Background;
 
             UpdateMarkerPosition(SelectedColor);
+            LastColor.Background = CurrentColor.Background;
 
-            #region Update TextBoxes
+            #region Update the values
 
             _isUpdating = true;
 
@@ -206,8 +141,6 @@ namespace ScreenToGif.Windows.Other
             RedIntegerUpDown.Value = SelectedColor.R;
             GreenIntegerUpDown.Value = SelectedColor.G;
             BlueIntegerUpDown.Value = SelectedColor.B;
-
-            HexadecimalTextBox.Text = SelectedColor.ToString();
 
             _isUpdating = false;
 
@@ -219,41 +152,56 @@ namespace ScreenToGif.Windows.Other
             LastColor.Background = CurrentColor.Background;
         }
 
-        #region Text Changed
-
         private void ArgbText_ValueChanged(object sender, RoutedEventArgs e)
         {
-            if (AlphaIntegerUpDown == null) return;
-            if (_isUpdating) return;
+            if (AlphaIntegerUpDown == null || _isUpdating)
+                return;
 
-            SelectedColor = Color.FromArgb(
-                            (byte)AlphaIntegerUpDown.Value,
-                            (byte)RedIntegerUpDown.Value,
-                            (byte)GreenIntegerUpDown.Value,
-                            (byte)BlueIntegerUpDown.Value);
-
-            _isUpdating = true;
-
-            HexadecimalTextBox.Text = SelectedColor.ToString();
-
-            _isUpdating = false;
-
+            SelectedColor = Color.FromArgb((byte)AlphaIntegerUpDown.Value, (byte)RedIntegerUpDown.Value, (byte)GreenIntegerUpDown.Value, (byte)BlueIntegerUpDown.Value);
+            
             UpdateMarkerPosition(SelectedColor);
+            LastColor.Background = CurrentColor.Background;
         }
 
-        private void HexadecimalText_ValueChanged(object sender, RoutedEventArgs e)
+        private void ValueBox_MouseWheel(object sender, MouseWheelEventArgs e)
         {
-            if (HexadecimalTextBox == null) return;
-            if (HexadecimalTextBox.Text == null) return;
-            if (_isUpdating) return;
+            if (!(sender is IntegerUpDown textBox))
+                return;
 
-            var converted = ColorConverter.ConvertFromString(HexadecimalTextBox.Text.PadRight(9, '0'));
+            textBox.Value = e.Delta > 0 ? textBox.Value + 1 : textBox.Value - 1;
+        }
 
-            if (converted == null) return;
+        private void EyeDropperButton_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            Mouse.Capture(EyeDropperButton);
 
-            SelectedColor = (Color)converted;
+            _captureSize = new Size(Math.Round(EyeDropperButton.ActualWidth / 6d, 0), Math.Round(EyeDropperButton.ActualHeight / 6d, 0));
 
-            UpdateMarkerPosition(SelectedColor);
+            EyeDropperButton.PreviewMouseUp += EyeDropperButton_PreviewMouseUp;
+            EyeDropperButton.PreviewMouseMove += EyeDropperButton_PreviewMouseMove;
+
+            Cursor = Cursors.Cross;
+            EyeDropperImage.Opacity = 1;
+            EyeDropperButton.Opacity = 0;
+        }
+
+        private void EyeDropperButton_PreviewMouseMove(object sender, MouseEventArgs e)
+        {
+            var str = new Native.PointW();
+            Native.GetCursorPos(ref str);
+
+            var image = Native.CaptureBitmapSource((int)_captureSize.Width, (int)_captureSize.Height, str.X - (int)(_captureSize.Width / 2d), str.Y - (int)(_captureSize.Height / 2d));
+
+            if (image.Format != PixelFormats.Bgra32)
+                image = new FormatConvertedBitmap(image, PixelFormats.Bgra32, null, 0);
+
+            EyeDropperImage.Source = image;
+
+            var pix = new PixelUtil(image);
+            pix.LockBits();
+            UpdateMarkerPosition(pix.GetPixel((int)(_captureSize.Width / 2d), (int)(_captureSize.Height / 2d)));
+
+            #region Update the values
 
             _isUpdating = true;
 
@@ -263,10 +211,24 @@ namespace ScreenToGif.Windows.Other
             BlueIntegerUpDown.Value = SelectedColor.B;
 
             _isUpdating = false;
+
+            #endregion
+
+            pix.UnlockBits();
         }
 
-        #endregion
+        private void EyeDropperButton_PreviewMouseUp(object sender, MouseButtonEventArgs e)
+        {
+            EyeDropperButton.ReleaseMouseCapture();
+            Cursor = Cursors.Arrow;
+            EyeDropperImage.Opacity = 0;
+            EyeDropperButton.Opacity = 1;
+            EyeDropperImage.Source = null;
 
+            EyeDropperButton.PreviewMouseUp -= EyeDropperButton_PreviewMouseUp;
+            EyeDropperButton.PreviewMouseMove -= EyeDropperButton_PreviewMouseMove;
+        }
+        
         private void OkButton_Click(object sender, RoutedEventArgs e)
         {
             DialogResult = true;
@@ -293,17 +255,20 @@ namespace ScreenToGif.Windows.Other
 
             var hsv = ColorExtensions.ConvertRgbToHsv(theColor.R, theColor.G, theColor.B);
 
-            CurrentColor.Background = LastColor.Background = new SolidColorBrush(theColor);
-
+            CurrentColor.Background = new SolidColorBrush(theColor);
             ColorSlider.Value = hsv.H;
+            AlphaSlider.SpectrumColor = theColor;
+            AlphaSlider.Value = theColor.A;
 
             var p = new Point(hsv.S, 1 - hsv.V);
 
             _colorPosition = p;
-            p.X = p.X * ColorDetail.ActualWidth;
-            p.Y = p.Y * ColorDetail.ActualHeight;
+            p.X *= ColorDetail.ActualWidth;
+            p.Y *= ColorDetail.ActualHeight;
             _markerTransform.X = p.X;
             _markerTransform.Y = p.Y;
+
+            SelectedColor = theColor;
         }
 
         private void DetermineColor(Point p)
@@ -314,9 +279,10 @@ namespace ScreenToGif.Windows.Other
                 V = 1 - p.Y
             };
 
-            SelectedColor = ColorExtensions.ConvertHsvToRgb(hsv.H, hsv.S, hsv.V, SelectedColor.A);
+            SelectedColor = ColorExtensions.ConvertHsvToRgb(hsv.H, hsv.S, hsv.V, AlphaSlider.Value);
 
             CurrentColor.Background = new SolidColorBrush(SelectedColor);
+            AlphaSlider.SpectrumColor = SelectedColor;
 
             #region Update TextBoxes
 
@@ -326,8 +292,6 @@ namespace ScreenToGif.Windows.Other
             RedIntegerUpDown.Value = SelectedColor.R;
             GreenIntegerUpDown.Value = SelectedColor.G;
             BlueIntegerUpDown.Value = SelectedColor.B;
-
-            HexadecimalTextBox.Text = SelectedColor.ToString();
 
             _isUpdating = false;
 

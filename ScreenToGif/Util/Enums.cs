@@ -1,6 +1,32 @@
 ﻿namespace ScreenToGif.Util
 {
     /// <summary>
+    /// Determines the app's theme.
+    /// </summary>
+    public enum AppTheme
+    {
+        Light,
+        Medium,
+        Dark,
+        VeryDark,
+    }
+
+    /// <summary>
+    /// The direction in which the window should be resized.
+    /// </summary>
+    public enum ResizeDirection
+    {
+        Left = 1,
+        Right = 2,
+        Top = 3,
+        TopLeft = 4,
+        TopRight = 5,
+        Bottom = 6,
+        BottomLeft = 7,
+        BottomRight = 8
+    }
+
+    /// <summary>
     /// Determines how the past bahaves.
     /// </summary>
     public enum PasteBehavior
@@ -27,6 +53,11 @@
         Gif,
 
         /// <summary>
+        /// Animated Portable Network Graphics.
+        /// </summary>
+        Apng,
+
+        /// <summary>
         /// Any type of video.
         /// </summary>
         Video,
@@ -39,7 +70,12 @@
         /// <summary>
         /// Project file, .stg or .zip.
         /// </summary>
-        Project
+        Project,
+
+        /// <summary>
+        /// PSD file.
+        /// </summary>
+        Photoshop,
     }
 
     /// <summary>
@@ -83,20 +119,37 @@
         /// </summary>
         IncreaseDecreaseDelay = 7,
 
+        ScaleDelay = 8,
+
         /// <summary>
         /// Fade Transition Panel.
         /// </summary>
-        Fade = 8,
+        Fade = 9,
 
         /// <summary>
         /// Slide Transition Panel.
         /// </summary>
-        Slide = 9,
+        Slide = 10,
 
         /// <summary>
         /// Reduce Frame Count Panel.
         /// </summary>
-        ReduceFrames = 10,
+        ReduceFrames = 11,
+
+        /// <summary>
+        /// Load Recent Panel.
+        /// </summary>
+        LoadRecent = 12,
+
+        /// <summary>
+        /// Remove Duplicates Panel.
+        /// </summary>
+        RemoveDuplicates = 13,
+
+        /// <summary>
+        /// Mouse Clicks Panel.
+        /// </summary>
+        MouseClicks = 14,
 
         /// <summary>
         /// Crop Panel.
@@ -124,29 +177,44 @@
         FreeDrawing = -5,
 
         /// <summary>
+        /// Shapes Panel.
+        /// </summary>
+        Shapes = -6,
+
+        /// <summary>
         /// Watermark Panel.
         /// </summary>
-        Watermark = -6,
+        Watermark = -7,
 
         /// <summary>
         /// Border Panel.
         /// </summary>
-        Border = -7,
+        Border = -8,
 
         /// <summary>
         /// Cinemagraph Panel.
         /// </summary>
-        Cinemagraph = -8,
+        Cinemagraph = -9,
 
         /// <summary>
         /// Progress Panel.
         /// </summary>
-        Progress = -9,
+        Progress = -10,
 
         /// <summary>
         /// Key Strokes Panel.
         /// </summary>
-        KeyStrokes = -10,
+        KeyStrokes = -11,
+
+        /// <summary>
+        /// Obfuscate Panel.
+        /// </summary>
+        Obfuscate = -12,
+
+        /// <summary>
+        /// Shadow Panel.
+        /// </summary>
+        Shadow = -13,
     }
 
     /// <summary>
@@ -182,6 +250,11 @@
     public enum Stage
     {
         /// <summary>
+        /// Recording stopped, but selecting the region to record.
+        /// </summary>
+        SelectingRegion = -1,
+
+        /// <summary>
         /// Recording stopped.
         /// </summary>
         Stopped = 0,
@@ -204,7 +277,12 @@
         /// <summary>
         /// Single shot mode.
         /// </summary>
-        Snapping = 4
+        Snapping = 4,
+
+        /// <summary>
+        /// The recording is being discarded.
+        /// </summary>
+        Discarding = 5
     }
 
     /// <summary>
@@ -213,9 +291,9 @@
     public enum Status
     {
         /// <summary>
-        /// Normal encoding status.
+        /// Processing encoding/uploading status.
         /// </summary>
-        Encoding,
+        Processing,
 
         /// <summary>
         /// The Encoding was canceled. So aparently "cancelled" (with two L's) is also a valid grammar. Huh, that's strange.
@@ -246,7 +324,7 @@
         FlipHorizontal,
         FlipVertical,
         RotateRight90,
-        RotateLeft90,
+        RotateLeft90
     }
 
     /// <summary>
@@ -276,8 +354,9 @@
     public enum DelayChangeType
     {
         Override,
-        IncreaseDecrease
-    }
+        IncreaseDecrease,
+      Scale
+   }
 
     /// <summary>
     /// Type of the gif encoder.
@@ -286,7 +365,18 @@
     {
         Legacy,
         ScreenToGif,
-        PaintNet
+        PaintNet,
+        FFmpeg,
+        Gifski
+    }
+
+    /// <summary>
+    /// Type of the apng encoder.
+    /// </summary>
+    public enum ApngEncoderType
+    {
+        ScreenToGif,
+        FFmpeg,
     }
 
     /// <summary>
@@ -297,6 +387,7 @@
         Ordered,
         NeuQuant,
         Octree,
+        Grayscale,
     }
 
     /// <summary>
@@ -352,7 +443,187 @@
     {
         Video,
         Gif,
+        Apng,
         Image,
         Project
+    }
+
+    /// <summary>
+    /// Specifies the placement of the adorner in related to the adorned control.
+    /// </summary>
+    public enum AdornerPlacement
+    {
+        Inside,
+        Outside
+    }
+
+    /// <summary>
+    /// Specifies the type of copy operation.
+    /// </summary>
+    public enum CopyType
+    {
+        File,
+        FolderPath,
+        FilePath,
+        Link
+    }
+    
+    /// <summary>
+    /// Specifies the status of the image card control.
+    /// </summary>
+    public enum ExtrasStatus
+    {
+        NotAvailable,
+        Available,
+        Processing,
+        Ready,
+        Error
+    }
+
+    /// <summary>
+    /// Specifies the type of frame delay adjustment for the 'Reduce Framerate'.
+    /// </summary>
+    public enum ReduceDelayType
+    {
+        DontAdjust = 0,
+        Previous = 1,
+        Evenly = 2
+    }
+
+    /// <summary>
+    /// Specifies the type of frame removal.
+    /// </summary>
+    public enum DuplicatesRemovalType
+    {
+        First = 0,
+        Last = 1
+    }
+
+    /// <summary>
+    /// Specifies the type of frame delay adjustment.
+    /// </summary>
+    public enum DuplicatesDelayType
+    {
+        DontAdjust = 0,
+        Average = 1,
+        Sum = 2
+    }
+
+    /// <summary>
+    /// Event flags for mouse-related events.
+    /// </summary>
+    public enum MouseEventType
+    {
+        MouseMove,
+        IconRightMouseDown,
+        IconLeftMouseDown,
+        IconRightMouseUp,
+        IconLeftMouseUp,
+        IconMiddleMouseDown,
+        IconMiddleMouseUp,
+        IconLeftDoubleClick
+    }
+
+
+    /// <summary>
+    /// Dialog Icons.
+    /// </summary>
+    public enum Icons
+    {
+        /// <summary>
+        /// Information. Blue.
+        /// </summary>
+        Info,
+
+        /// <summary>
+        /// Warning, yellow.
+        /// </summary>
+        Warning,
+
+        /// <summary>
+        /// Error, red.
+        /// </summary>
+        Error,
+
+        /// <summary>
+        /// Success, green.
+        /// </summary>
+        Success,
+
+        /// <summary>
+        /// A question mark, blue.
+        /// </summary>
+        Question,
+    }
+
+    /// <summary>
+    /// The proxy method, used for uploading files.
+    /// </summary>
+    public enum ProxyType
+    {
+        Disabled = 0,
+        Manual = 1,
+        System = 2
+    }
+
+    /// <summary>
+    /// The upload service.
+    /// </summary>
+    public enum UploadService
+    {
+        None = 0,
+        ImgurAnonymous = 1,
+        Imgur = 2,
+        GfycatAnonymous = 3,
+        Gfycat = 4,
+        Yandex = 5,
+    }
+
+    public enum StatusType : int
+    {
+        None = 0,
+        Info,
+        Update,
+        Warning,
+        Error
+    }
+
+    /// <summary>
+    /// The types of source of project creation.
+    /// </summary>
+    public enum ProjectByType
+    {
+        Unknown = 0,
+        ScreenRecorder = 1,
+        WebcamRecorder = 2,
+        BoardRecorder = 3,
+        Editor = 4,
+    }
+
+    /// <summary>
+    /// The types of drawings.
+    /// </summary>
+    public enum DrawingModeType
+    {
+        None = 0,
+        Ink,
+        Select,
+        EraseByPoint,
+        EraseByObject,
+        Rectangle,
+        Circle,
+        Triangle,
+        Arrow,
+        Baloon,
+    }
+
+    /// <summary>
+    /// Delay update type.
+    /// </summary>
+    public enum DelayUpdateType
+    {
+        Override = 0,
+        IncreaseDecrease = 1,
+        Scale = 2,
     }
 }

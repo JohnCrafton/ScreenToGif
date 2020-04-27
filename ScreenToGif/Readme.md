@@ -1,22 +1,24 @@
-﻿#ScreenToGif  
+﻿# ScreenToGif  
 
 This is the current project of ScreenToGif.  
 
-VS 2015 and .Net 4.6.1 required.  
+_VS 2019 and .Net 4.8 or newer required._
 
 
-Version 2.6:
+## What's new? (Version 2.23.1)
 
-• Updated Spanish (Argentina) translation.
+• Added buttons to navigate to the folder of the extras.  
+• Updated the Chinese (Simplified), Japanese and Dutch translations.  
 
-Fixed:
+### Fixed:
 
-♦ 
+♦ The Options > Extras section was not handling well relative paths, cause a false negative detection of the tools.  
 
-Known bugs:
+### Known Bugs:
 
-♠ OutOfMemory exception when importing videos. 
-♠ The crop feature fails when cropping a board recording (with high DPI);
-
-TODO: 
-Let users (or automatically) delete old projects.
+♠ When importing multiple images with different sizes at the same time, the app does not ask to resize all images to the same size.   
+♠ When exporting with FFmpeg, the last frame may be out of sync with the timmings of the project.  
+♠ Cancelling a encoding of FFmpeg will result in a crash (file in use).  
+♠ Keystrokes has a 1 pixel transparent border at the bottom-right sides when using a high DPI screen.  
+♠ It's impossible to capture snapshots with the DirectX method.  
+♠ When capturing with the DirectX, the recording will crash if the recording area is outside of the screen.  

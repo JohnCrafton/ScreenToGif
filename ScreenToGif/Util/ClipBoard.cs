@@ -1,8 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using ScreenToGif.FileWriters;
-using ScreenToGif.Util.Model;
+using ScreenToGif.Model;
 
 namespace ScreenToGif.Util
 {
@@ -42,7 +41,7 @@ namespace ScreenToGif.Util
                     File.Copy(frameInfo.Path, filename, true);
 
                     //Create the new object and add to the list.
-                    newList.Add(new FrameInfo(filename, frameInfo.Delay));
+                    newList.Add(new FrameInfo(filename, frameInfo.Delay, frameInfo.CursorX, frameInfo.CursorY, frameInfo.WasClicked, frameInfo.KeyList, frameInfo.Index));
                 }
 
                 //Adds the current copied list to the clipboard.
@@ -79,7 +78,7 @@ namespace ScreenToGif.Util
                     File.Delete(frameInfo.Path);
 
                     //Create the new object and add to the list.
-                    newList.Add(new FrameInfo(filename, frameInfo.Delay));
+                    newList.Add(new FrameInfo(filename, frameInfo.Delay, frameInfo.CursorX, frameInfo.CursorY, frameInfo.WasClicked, frameInfo.KeyList, frameInfo.Index));
                 }
 
                 //Adds the current cut list to the clipboard.
@@ -106,13 +105,13 @@ namespace ScreenToGif.Util
             foreach (var frameInfo in Items[index])
             {
                 //Changes the path of the image.
-                var filename = Path.Combine(recordingFolder, $"{pasteIndex} - {Path.GetFileNameWithoutExtension(frameInfo.Path)} {DateTime.Now:hh-mm-ss-FFFF}.png");
+                var filename = Path.Combine(recordingFolder, $"{pasteIndex} - {Path.GetFileNameWithoutExtension(frameInfo.Path)} {DateTime.Now:hh-mm-ss-ffff}.png");
 
                 //Copy the image to the folder.
                 File.Copy(frameInfo.Path, filename, true);
 
                 //Create the new object and add to the list.
-                newList.Add(new FrameInfo(filename, frameInfo.Delay));
+                newList.Add(new FrameInfo(filename, frameInfo.Delay, frameInfo.CursorX, frameInfo.CursorY, frameInfo.WasClicked, frameInfo.KeyList, frameInfo.Index));
             }
 
             return newList;

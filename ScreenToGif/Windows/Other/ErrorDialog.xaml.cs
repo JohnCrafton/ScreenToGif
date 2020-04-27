@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 
@@ -40,6 +41,7 @@ namespace ScreenToGif.Windows.Other
             CancelButton.Visibility = Visibility.Collapsed;
             YesButton.Visibility = Visibility.Collapsed;
             NoButton.Visibility = Visibility.Collapsed;
+            DetailsButton.Visibility = Exception != null ? Visibility.Visible : Visibility.Collapsed;
 
             OkButton.Focus();
 
@@ -54,6 +56,7 @@ namespace ScreenToGif.Windows.Other
         {
             YesButton.Visibility = Visibility.Collapsed;
             NoButton.Visibility = Visibility.Collapsed;
+            DetailsButton.Visibility = Exception != null ? Visibility.Visible : Visibility.Collapsed;
 
             CancelButton.Focus();
 
@@ -68,6 +71,7 @@ namespace ScreenToGif.Windows.Other
         {
             CancelButton.Visibility = Visibility.Collapsed;
             OkButton.Visibility = Visibility.Collapsed;
+            DetailsButton.Visibility = Exception != null ? Visibility.Visible : Visibility.Collapsed;
 
             NoButton.Focus();
 
@@ -89,7 +93,7 @@ namespace ScreenToGif.Windows.Other
         /// <returns>True if Ok</returns>
         public static bool Ok(string title, string instruction, string observation, Exception exception, Icons icon = Icons.Error)
         {
-            var dialog = new ErrorDialog {Exception = exception};
+            var dialog = new ErrorDialog { Exception = exception };
             dialog.PrepareOk(title, instruction, observation.Replace(@"\n", Environment.NewLine).Replace(@"\r", ""), icon);
             var result = dialog.ShowDialog();
 
@@ -155,10 +159,15 @@ namespace ScreenToGif.Windows.Other
             viewer.ShowDialog();
         }
 
-        private void SendButton_Click(object sender, RoutedEventArgs e)
+        private async void SendButton_Click(object sender, RoutedEventArgs e)
         {
-            var feedback = new Feedback {Topmost = true};
-            feedback.ShowDialog();
+            var feedback = new Feedback { Topmost = true };
+
+            if (feedback.ShowDialog() != true)
+                return;
+
+            if (App.MainViewModel != null)
+                await Task.Factory.StartNew(App.MainViewModel.SendFeedback, TaskCreationOptions.LongRunning);
         }
 
         #endregion

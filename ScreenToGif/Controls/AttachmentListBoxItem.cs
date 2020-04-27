@@ -28,22 +28,22 @@ namespace ScreenToGif.Controls
         [Bindable(true), Category("Common")]
         public string ShortName
         {
-            get { return (string)GetValue(ShortNameProperty); }
-            private set { SetValue(ShortNameProperty, value); }
+            get => (string)GetValue(ShortNameProperty);
+            private set => SetValue(ShortNameProperty, value);
         }
 
         [Bindable(true), Category("Common")]
         public string Attachment
         {
-            get { return (string)GetValue(AttachmentProperty); }
-            private set { SetValue(AttachmentProperty, value); }
+            get => (string)GetValue(AttachmentProperty);
+            private set => SetValue(AttachmentProperty, value);
         }
 
         [Bindable(true), Category("Common")]
         public BitmapSource FileIcon
         {
-            get { return (BitmapSource)GetValue(FileIconProperty); }
-            private set { SetValue(FileIconProperty, value); }
+            get => (BitmapSource)GetValue(FileIconProperty);
+            private set => SetValue(FileIconProperty, value);
         }
 
         #endregion
@@ -65,23 +65,21 @@ namespace ScreenToGif.Controls
             if (item == null)
                 return;
 
-            if (File.Exists(item.Attachment))
+            if (!File.Exists(item.Attachment)) return;
+
+            item.ShortName = Path.GetFileName(item.Attachment);
+
+            using (var icon = Icon.ExtractAssociatedIcon(item.Attachment))
             {
-                item.ShortName = Path.GetFileName(item.Attachment);
-
-                var icon = Icon.ExtractAssociatedIcon(item.Attachment);
-
                 if (icon == null)
                     return;
 
-                item.FileIcon = Imaging.CreateBitmapSourceFromHIcon(icon.Handle, Int32Rect.Empty, 
-                      BitmapSizeOptions.FromEmptyOptions());
-
-                icon.Dispose();
-                GC.Collect(1);
-
-                item.UpdateLayout();
+                item.FileIcon = Imaging.CreateBitmapSourceFromHIcon(icon.Handle, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
             }
+
+            GC.Collect(1);
+
+            item.UpdateLayout();
         }
     }
 }

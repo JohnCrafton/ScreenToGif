@@ -1,33 +1,47 @@
 ﻿using System;
 using System.Diagnostics;
 using System.IO;
-using System.IO.Compression;
 using System.Linq;
-using System.Net;
+using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Documents;
 using System.Xml.Linq;
-using System.Xml.XPath;
-using ScreenToGif.FileWriters;
+using ScreenToGif.Controls;
+using ScreenToGif.Model;
 using ScreenToGif.Util;
 
 namespace ScreenToGif.Windows.Other
 {
     public partial class DownloadDialog : Window
     {
+        #region Properties
+
         public XElement Element { get; set; }
+
+        internal UpdateAvailable Details { get; set; }
+
+        public bool IsChocolatey { get; set; }
+
+        public bool IsInstaller { get; set; }
+
+        public bool WasPromptedManually { get; set; }
+
+        #endregion
+
 
         public DownloadDialog()
         {
             InitializeComponent();
         }
 
+
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
             #region Validation
 
-            if (Element == null)
+            if (Global.UpdateAvailable == null)
             {
-                WhatsNewParagraph.Inlines.Add("Something wrong happened.");
+                WhatsNewParagraph.Inlines.Add("Something wrong happened. No update was found.");
                 return;
             }
 
@@ -35,133 +49,120 @@ namespace ScreenToGif.Windows.Other
 
             try
             {
-                VersionRun.Text = "Version " + Element.XPathSelectElement("tag_name").Value;
-                SizeRun.Text = Humanizer.BytesToString(Convert.ToInt32(Element.XPathSelectElement("assets").FirstNode.XPathSelectElement("size").Value));
+                //Detect if this is portable or installed. Download the proper file.
+                IsChocolatey = AppDomain.CurrentDomain.BaseDirectory.EndsWith(@"Chocolatey\lib\screentogif\content\");
+                IsInstaller = Directory.EnumerateFiles(AppDomain.CurrentDomain.BaseDirectory).Any(x => x.ToLowerInvariant().EndsWith("screentogif.visualelementsmanifest.xml"));
 
-                var body = Element.XPathSelectElement("body").Value;
+                VersionRun.Text = $"{LocalizationHelper.Get("S.Updater.Version")} {Global.UpdateAvailable.Version}";
+                SizeRun.Text = Global.UpdateAvailable.InstallerSize > 0 ? Humanizer.BytesToString(IsInstaller ? Global.UpdateAvailable.InstallerSize : Global.UpdateAvailable.PortableSize) : "";
+                TypeRun.Text = IsInstaller ? LocalizationHelper.Get("S.Updater.Installer") : LocalizationHelper.Get("S.Updater.Portable");
 
-                var splited = body.Split(new[] { '#' }, StringSplitOptions.RemoveEmptyEntries);
+                //If set to download automatically, check if the installer was downloaded.
+                if (UserSettings.All.InstallUpdates)
+                {
+                    //If the update was already downloaded.
+                    if (File.Exists(Global.UpdateAvailable.InstallerPath))
+                    {
+                        DownloadButton.SetResourceReference(ImageButton.TextProperty, "S.Updater.Install");
 
-                WhatsNewParagraph.Inlines.Add(splited[0].Replace(" What's new?\r\n\r\n", ""));
+                        //When the update was prompted manually, the user can set the installer to run the app afterwards.
+                        if (WasPromptedManually)
+                        {
+                            RunAfterwardsCheckBox.Visibility = Visibility.Visible;
+                            RunAfterwardsCheckBox.IsChecked = true;
+                        }
+                    }
+                }
 
-                FixesParagraph.Inlines.Add(splited[1].Replace(" Bug fixes:\r\n\r\n", ""));
+                //Details.
+                if (Global.UpdateAvailable.IsFromGithub)
+                {
+                    //From Github, the description is available.
+                    var splited = Global.UpdateAvailable.Description.Split(new[] { '#' }, StringSplitOptions.RemoveEmptyEntries);
+
+                    WhatsNewParagraph.Inlines.Add(splited[0].Replace(" What's new?\r\n\r\n", ""));
+                    FixesParagraph.Inlines.Add(splited.Length > 1 ? splited[1].Replace(" Bug fixes:\r\n\r\n", "").Replace(" Fixed:\r\n\r\n", "") : "Aparently nothing.");
+                }
+                else
+                {
+                    //If the release detail was obtained by querying Fosshub, no release note is available. 
+                    MainFlowDocument.Blocks.Remove(WhatsNewParagraphTitle);
+                    MainFlowDocument.Blocks.Remove(FixesParagraphTitle);
+                    MainFlowDocument.Blocks.Remove(FixesParagraph);
+
+                    var run = new Run();
+                    run.SetResourceReference(Run.TextProperty, "S.Updater.Info.NewVersionAvailable");
+                    WhatsNewParagraph.Inlines.Add(run);
+                }
             }
             catch (Exception ex)
             {
-                LogWriter.Log(ex, "Loading download informations");
-
-                WhatsNewParagraph.Inlines.Add("Something wrong happened.");
+                LogWriter.Log(ex, "Impossible to load the download details");
+                StatusBand.Error(LocalizationHelper.Get("S.Updater.Warning.Show"));
             }
         }
 
         private async void DownloadButton_Click(object sender, RoutedEventArgs e)
         {
-            #region Save as
-
-            var save = new Microsoft.Win32.SaveFileDialog
+            //If update already downloaded, simply close this window. The installation will happen afterwards.
+            if (File.Exists(Global.UpdateAvailable.InstallerPath))
             {
-                FileName = "ScreenToGif", // + Element.XPathSelectElement("tag_name").Value,
-                DefaultExt = ".exe",
-                Filter = "ScreenToGif executable (.exe)|*.exe"
-            };
-
-            var result = save.ShowDialog();
-
-            if (!result.HasValue || !result.Value)
+                GC.Collect();
+                DialogResult = true;
                 return;
+            }
 
-            #endregion
+            //When the update was not queried from Github, the dowload must be done by browser.
+            if (!Global.UpdateAvailable.IsFromGithub)
+            {
+                try
+                {
+                    Process.Start(Global.UpdateAvailable.InstallerDownloadUrl);
+                }
+                catch (Exception ex)
+                {
+                    LogWriter.Log(ex, "Impossible to open the browser to download the update.", Global.UpdateAvailable?.InstallerDownloadUrl);
+                }
+
+                GC.Collect();
+                DialogResult = true;
+                return;
+            }
 
             DownloadButton.IsEnabled = false;
-            StatusBand.Info("Downloading...");
+            StatusBand.Info(LocalizationHelper.Get("S.Updater.Downloading"));
             DownloadProgressBar.Visibility = Visibility.Visible;
+            RunAfterwardsCheckBox.Visibility = Visibility.Collapsed;
 
-            var tempFilename = save.FileName.Replace(".exe", DateTime.Now.ToString(" hh-mm-ss fff") + ".zip");
-
-            #region Download
-
-            try
-            {
-                using (var webClient = new WebClient())
-                {
-                    webClient.Credentials = CredentialCache.DefaultNetworkCredentials;
-                    await webClient.DownloadFileTaskAsync(new Uri(Element.XPathSelectElement("assets").FirstNode.XPathSelectElement("browser_download_url").Value), tempFilename);
-                }
-            }
-            catch (Exception ex)
-            {
-                LogWriter.Log(ex, "Download updates");
-
-                DownloadButton.IsEnabled = true;
-                DownloadProgressBar.Visibility = Visibility.Hidden;
-
-                Dialog.Ok("Update", "Error while downloading", ex.Message);
-                return;
-            }
-
-            #endregion
+            var result = await Task.Factory.StartNew(() => App.MainViewModel.DownloadUpdate());
 
             //If cancelled.
             if (!IsLoaded)
                 return;
-
-            #region Unzip
-
-            try
+                
+            if (!result)
             {
-                //Deletes if already exists.
-                if (File.Exists(save.FileName))
-                    File.Delete(save.FileName);
-
-                //Unzips the only file.
-                using (var zipArchive = ZipFile.Open(tempFilename, ZipArchiveMode.Read))
-                {
-                    zipArchive.Entries.First(x => x.Name.EndsWith(".exe")).ExtractToFile(save.FileName);
-                }
-            }
-            catch (Exception ex)
-            {
-                LogWriter.Log(ex, "Unziping update");
-
                 DownloadButton.IsEnabled = true;
                 DownloadProgressBar.Visibility = Visibility.Hidden;
-
-                Dialog.Ok("Update", "Error while unzipping", ex.Message);
+                StatusBand.Error(LocalizationHelper.Get("S.Updater.Warning.Download"));
                 return;
             }
 
-            #endregion
-
-            //If cancelled.
-            if (!IsLoaded)
-                return;
-
-            #region Delete temporary zip and run
-
-            try
+            //If the update was downloaded successfully, close this window to run.
+            if (File.Exists(Global.UpdateAvailable.InstallerPath))
             {
-                File.Delete(tempFilename);
-
-                Process.Start(save.FileName);
-            }
-            catch (Exception ex)
-            {
-                LogWriter.Log(ex, "Finishing update");
-
-                DownloadButton.IsEnabled = true;
-                DownloadProgressBar.Visibility = Visibility.Hidden;
-
-                Dialog.Ok("Update", "Error while finishing the update", ex.Message);
+                GC.Collect();
+                StatusBand.Hide();
+                DialogResult = true;
                 return;
             }
 
-            #endregion
-
-            DialogResult = true;
+            StatusBand.Error(LocalizationHelper.Get("S.Updater.Warning.Download"));
         }
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)
         {
+            GC.Collect();
             DialogResult = false;
         }
     }

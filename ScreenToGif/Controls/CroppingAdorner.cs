@@ -34,7 +34,7 @@ namespace ScreenToGif.Controls
         /// <summary>
         /// Corner Thumbs used to change the crop selection.
         /// </summary>
-        private readonly Thumb _thumbTopLeft, _thumbTopRight, _thumbBottomLeft, 
+        private readonly Thumb _thumbTopLeft, _thumbTopRight, _thumbBottomLeft,
             _thumbBottomRight, _thumbTop, _thumbLeft, _thumbBottom, _thumbRight, _thumbCenter;
 
         /// <summary>
@@ -56,54 +56,42 @@ namespace ScreenToGif.Controls
 
         public event RoutedEventHandler CropChanged
         {
-            add { AddHandler(CropChangedEvent, value); }
-            remove { RemoveHandler(CropChangedEvent, value); }
+            add => AddHandler(CropChangedEvent, value);
+            remove => RemoveHandler(CropChangedEvent, value);
         }
 
         #endregion
 
         #region Dependency Properties
 
-        public static DependencyProperty FillProperty = Shape.FillProperty.AddOwner(typeof(CroppingAdorner), 
-            new FrameworkPropertyMetadata(new SolidColorBrush(Color.FromArgb(110,0,0,0)), FillPropChanged));
+        public static DependencyProperty FillProperty = Shape.FillProperty.AddOwner(typeof(CroppingAdorner),
+            new FrameworkPropertyMetadata(new SolidColorBrush(Color.FromArgb(110, 0, 0, 0)), FillPropChanged));
 
         public static readonly DependencyProperty ClipRectangleProperty = DependencyProperty.Register("ClipRectangle", typeof(Rect), typeof(CroppingAdorner),
-            new FrameworkPropertyMetadata(new Rect(0,0,0,0), ClipRectanglePropertyChanged));
+            new FrameworkPropertyMetadata(new Rect(0, 0, 0, 0), ClipRectanglePropertyChanged));
 
         public Brush Fill
         {
-            get { return (Brush)GetValue(FillProperty); }
-            set { SetValue(FillProperty, value); }
+            get => (Brush)GetValue(FillProperty);
+            set => SetValue(FillProperty, value);
         }
 
         public Rect ClipRectangle
         {
-            get
-            {
-                return _cropMask.Interior;
-                //return (Rect)GetValue(ClipRectangleProperty);
-            }
-            set
-            {
-                SetValue(ClipRectangleProperty, value);
-            }
+            get => _cropMask.Interior;
+            set => SetValue(ClipRectangleProperty, value);
         }
 
         private static void FillPropChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
-            var crp = d as CroppingAdorner;
-
-            if (crp != null)
-            {
-                crp._cropMask.Fill = (Brush)e.NewValue;
-            }
+            if (d is CroppingAdorner crp)
+                crp._cropMask.Fill = (Brush) e.NewValue;
         }
 
         private static void ClipRectanglePropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
-            var crp = d as CroppingAdorner;
-
-            if (crp == null) return;
+            if (!(d is CroppingAdorner crp))
+                return;
 
             crp._cropMask.Interior = (Rect)e.NewValue;
             crp.SetThumbs(crp._cropMask.Interior);
@@ -116,7 +104,7 @@ namespace ScreenToGif.Controls
 
         static CroppingAdorner()
         {
-            using (var g = System.Drawing.Graphics.FromHwnd((IntPtr) 0))
+            using (var g = System.Drawing.Graphics.FromHwnd((IntPtr)0))
             {
                 DpiX = g.DpiX;
                 DpiY = g.DpiY;
@@ -130,7 +118,8 @@ namespace ScreenToGif.Controls
             {
                 IsHitTestVisible = false,
                 Interior = rcInit,
-                Fill = Fill
+                Fill = Fill,
+                Focusable = true
             };
 
             _thumbCanvas = new Canvas
@@ -139,7 +128,7 @@ namespace ScreenToGif.Controls
                 VerticalAlignment = VerticalAlignment.Stretch
             };
 
-            _visualCollection = new VisualCollection(this) { _cropMask, _thumbCanvas};
+            _visualCollection = new VisualCollection(this) { _cropMask, _thumbCanvas };
 
             BuildCorner(ref _thumbTop, Cursors.SizeNS);
             BuildCorner(ref _thumbBottom, Cursors.SizeNS);
@@ -150,6 +139,8 @@ namespace ScreenToGif.Controls
             BuildCorner(ref _thumbBottomLeft, Cursors.SizeNESW);
             BuildCorner(ref _thumbBottomRight, Cursors.SizeNWSE);
             BuildCenter(ref _thumbCenter);
+
+            _cropMask.PreviewKeyDown += CropMask_PreviewKeyDown;
 
             //Cropping handlers.
             _thumbBottomLeft.DragDelta += HandleBottomLeft;
@@ -163,11 +154,97 @@ namespace ScreenToGif.Controls
             _thumbCenter.DragDelta += HandleCenter;
 
             //Clipping interior should be withing the bounds of the adorned element.
-            var element = adornedElement as FrameworkElement;
-
-            if (element != null)
-            {
+            if (adornedElement is FrameworkElement element)
                 element.SizeChanged += AdornedElement_SizeChanged;
+        }
+
+        private void CropMask_PreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            //Control + Shift: Expand both ways.
+            if ((Keyboard.Modifiers & ModifierKeys.Control) != 0 && (Keyboard.Modifiers & ModifierKeys.Shift) != 0)
+            {
+                switch (e.Key)
+                {
+                    case Key.Up:
+                        HandleBottom(_thumbCenter, new DragDeltaEventArgs(0, 1));
+                        HandleTop(_thumbCenter, new DragDeltaEventArgs(0, -1));
+                        break;
+                    case Key.Down:
+                        HandleBottom(_thumbCenter, new DragDeltaEventArgs(0, -1));
+                        HandleTop(_thumbCenter, new DragDeltaEventArgs(0, 1));
+                        break;
+                    case Key.Left:
+                        HandleRight(_thumbCenter, new DragDeltaEventArgs(-1, 0));
+                        HandleLeft(_thumbCenter, new DragDeltaEventArgs(1, 0));
+                        break;
+                    case Key.Right:
+                        HandleRight(_thumbCenter, new DragDeltaEventArgs(1, 0));
+                        HandleLeft(_thumbCenter, new DragDeltaEventArgs(-1, 0));
+                        break;
+                }
+
+                return;
+            }
+
+            //If the Shift key is pressed, the sizing mode is enabled (bottom right).
+            if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0)
+            {
+                switch (e.Key)
+                {
+                    case Key.Up:
+                        HandleBottom(_thumbCenter, new DragDeltaEventArgs(0, -1));
+                        break;
+                    case Key.Down:
+                        HandleBottom(_thumbCenter, new DragDeltaEventArgs(0, 1));
+                        break;
+                    case Key.Left:
+                        HandleRight(_thumbCenter, new DragDeltaEventArgs(-1, 0));
+                        break;
+                    case Key.Right:
+                        HandleRight(_thumbCenter, new DragDeltaEventArgs(1, 0));
+                        break;
+                }
+
+                return;
+            }
+
+            //If the Control key is pressed, the sizing mode is enabled (top left).
+            if ((Keyboard.Modifiers & ModifierKeys.Control) != 0)
+            {
+                switch (e.Key)
+                {
+                    case Key.Up:
+                        HandleTop(_thumbCenter, new DragDeltaEventArgs(0, -1));
+                        break;
+                    case Key.Down:
+                        HandleTop(_thumbCenter, new DragDeltaEventArgs(0, 1));
+                        break;
+                    case Key.Left:
+                        HandleLeft(_thumbCenter, new DragDeltaEventArgs(-1, 0));
+                        break;
+                    case Key.Right:
+                        HandleLeft(_thumbCenter, new DragDeltaEventArgs(1, 0));
+                        break;
+                }
+
+                return;
+            }
+
+            //If no other key is pressed, the movement mode is enabled.
+            switch (e.Key)
+            {
+                case Key.Up:
+                    HandleCenter(_thumbCenter, new DragDeltaEventArgs(0, -1));
+                    break;
+                case Key.Down:
+                    HandleCenter(_thumbCenter, new DragDeltaEventArgs(0, 1));
+                    break;
+                case Key.Left:
+                    HandleCenter(_thumbCenter, new DragDeltaEventArgs(-1, 0));
+                    break;
+                case Key.Right:
+                    HandleCenter(_thumbCenter, new DragDeltaEventArgs(1, 0));
+                    break;
             }
         }
 
@@ -180,14 +257,10 @@ namespace ScreenToGif.Controls
             var interior = _cropMask.Interior;
 
             if (interior.Width + drcW * dx < 0)
-            {
                 dx = -interior.Width / drcW;
-            }
 
             if (interior.Height + drcH * dy < 0)
-            {
                 dy = -interior.Height / drcH;
-            }
 
             interior = new Rect(interior.Left + drcL * dx,
                 interior.Top + drcT * dy,
@@ -196,87 +269,83 @@ namespace ScreenToGif.Controls
 
             //Minimum of 10x10.
             if (interior.Width < 10)
-                interior.Width = 10;
+            {
+                if (interior.X + interior.Width > _cropMask.Exterior.Width)
+                    interior.X = interior.Right - interior.Width;
+                else
+                    interior.Width = 10;
+            }
 
             if (interior.Height < 10)
-                interior.Height = 10;
+            {
+                if (interior.Y + interior.Height > _cropMask.Exterior.Height)
+                    interior.Y = interior.Bottom - interior.Height;
+                else
+                    interior.Height = 10;
+            }
 
             _cropMask.Interior = interior;
 
             SetThumbs(_cropMask.Interior);
             RaiseEvent(new RoutedEventArgs(CropChangedEvent, this));
+
+            Keyboard.Focus(_cropMask);
         }
 
         //Cropping from the bottom-left.
         private void HandleBottomLeft(object sender, DragDeltaEventArgs args)
         {
             if (sender is Thumb)
-            {
                 HandleThumb(1, 0, -1, 1, args.HorizontalChange, args.VerticalChange);
-            }
         }
 
         //Cropping from the bottom-right.
         private void HandleBottomRight(object sender, DragDeltaEventArgs args)
         {
             if (sender is Thumb)
-            {
                 HandleThumb(0, 0, 1, 1, args.HorizontalChange, args.VerticalChange);
-            }
         }
 
         //Cropping from the top-right.
         private void HandleTopRight(object sender, DragDeltaEventArgs args)
         {
             if (sender is Thumb)
-            {
                 HandleThumb(0, 1, 1, -1, args.HorizontalChange, args.VerticalChange);
-            }
         }
 
         //Cropping from the top-left.
         private void HandleTopLeft(object sender, DragDeltaEventArgs args)
         {
             if (sender is Thumb)
-            {
                 HandleThumb(1, 1, -1, -1, args.HorizontalChange, args.VerticalChange);
-            }
         }
 
         //Cropping from the top.
         private void HandleTop(object sender, DragDeltaEventArgs args)
         {
             if (sender is Thumb)
-            {
                 HandleThumb(0, 1, 0, -1, args.HorizontalChange, args.VerticalChange);
-            }
         }
 
         //Cropping from the left.
         private void HandleLeft(object sender, DragDeltaEventArgs args)
         {
             if (sender is Thumb)
-            {
                 HandleThumb(1, 0, -1, 0, args.HorizontalChange, args.VerticalChange);
-            }
         }
 
         //Cropping from the right.
         private void HandleRight(object sender, DragDeltaEventArgs args)
         {
             if (sender is Thumb)
-            {
                 HandleThumb(0, 0, 1, 0, args.HorizontalChange, args.VerticalChange);
-            }
         }
 
         //Cropping from the bottom.
         private void HandleBottom(object sender, DragDeltaEventArgs args)
         {
             if (sender is Thumb)
-            {
                 HandleThumb(0, 0, 0, 1, args.HorizontalChange, args.VerticalChange);
-            }
         }
 
         //Dragging the cropping selection.
@@ -286,8 +355,8 @@ namespace ScreenToGif.Controls
                 return;
 
             //Creates a new Rect based on the drag.
-            var interior = new Rect(_cropMask.Interior.Left + args.HorizontalChange, 
-                _cropMask.Interior.Top + args.VerticalChange, 
+            var interior = new Rect(_cropMask.Interior.Left + args.HorizontalChange,
+                _cropMask.Interior.Top + args.VerticalChange,
                 _cropMask.Interior.Width, _cropMask.Interior.Height);
 
             #region Limit the drag to inside the bounds
@@ -310,6 +379,8 @@ namespace ScreenToGif.Controls
 
             SetThumbs(_cropMask.Interior);
             RaiseEvent(new RoutedEventArgs(CropChangedEvent, this));
+
+            Keyboard.Focus(_cropMask);
         }
 
         #endregion
@@ -318,9 +389,7 @@ namespace ScreenToGif.Controls
 
         private void AdornedElement_SizeChanged(object sender, SizeChangedEventArgs e)
         {
-            var element = sender as FrameworkElement;
-
-            if (element == null)
+            if (!(sender is FrameworkElement element))
                 return;
 
             var wasChanged = false;
@@ -355,9 +424,7 @@ namespace ScreenToGif.Controls
             }
 
             if (wasChanged)
-            {
                 ClipRectangle = new Rect(intLeft, intTop, intWidth, intHeight);
-            }
         }
 
         #endregion
@@ -397,9 +464,7 @@ namespace ScreenToGif.Controls
             pxFromSize.Y = Math.Max(Math.Min(pxWhole.Y - pxFromPos.Y, pxFromSize.Y), 0);
 
             if (pxFromSize.X == 0 || pxFromSize.Y == 0)
-            {
                 return null;
-            }
 
             var rcFrom = new Int32Rect(pxFromPos.X, pxFromPos.Y, pxFromSize.X, pxFromSize.Y);
 
@@ -434,12 +499,8 @@ namespace ScreenToGif.Controls
         {
             var thick = new Thickness(0);
 
-            var element = AdornedElement as FrameworkElement;
-
-            if (element != null)
-            {
+            if (AdornedElement is FrameworkElement element)
                 thick = element.Margin;
-            }
 
             return thick;
         }
@@ -451,11 +512,11 @@ namespace ScreenToGif.Controls
             thumb = new Thumb
             {
                 Cursor = cursor,
-                Style = (Style) FindResource("ScrollBarThumbVertical"),
+                Style = (Style)FindResource("ScrollBar.Thumb"),
                 Width = ThumbWidth,
                 Height = ThumbWidth
             };
-            
+
             _thumbCanvas.Children.Add(thumb);
         }
 
@@ -491,7 +552,9 @@ namespace ScreenToGif.Controls
         protected override int VisualChildrenCount => _visualCollection.Count;
 
         protected override Visual GetVisualChild(int index)
-        { return _visualCollection[index]; }
+        {
+            return _visualCollection[index];
+        }
 
         #endregion
     }

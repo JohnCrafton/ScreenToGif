@@ -1,17 +1,13 @@
 ﻿using System;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using ScreenToGif.Util;
 
 namespace ScreenToGif.Windows.Other
 {
-    /// <summary>
-    /// Interaction logic for Dialog.xaml
-    /// </summary>
     public partial class Dialog : Window
     {
-        /// <summary>
-        /// Default contructor.
-        /// </summary>
         public Dialog()
         {
             InitializeComponent();
@@ -49,7 +45,7 @@ namespace ScreenToGif.Windows.Other
 
             IconViewbox.Child = GetIcon(icon);
 
-            InstructionLabel.Content = instruction;
+            InstructionLabel.Text = instruction;
             ObservationTextBlock.Text = observation;
             Title = title;
         }
@@ -63,23 +59,43 @@ namespace ScreenToGif.Windows.Other
 
             IconViewbox.Child = GetIcon(icon);
 
-            InstructionLabel.Content = instruction;
+            InstructionLabel.Text = instruction;
             ObservationTextBlock.Text = observation;
             Title = title;
         }
 
-        private void PrepareAsk(string title, string instruction, string observation, Icons icon)
+        private void PrepareAsk(string title, string instruction, string observation, bool yesAsDefault, Icons icon)
         {
             CancelButton.Visibility = Visibility.Collapsed;
             OkButton.Visibility = Visibility.Collapsed;
 
-            NoButton.Focus();
+            if (yesAsDefault)
+                YesButton.Focus();
+            else
+                NoButton.Focus();
 
             IconViewbox.Child = GetIcon(icon);
 
-            InstructionLabel.Content = instruction;
+            InstructionLabel.Text = instruction;
             ObservationTextBlock.Text = observation;
             Title = title;
+        }
+
+        /// <summary>
+        /// Handle all pressed keys that get sent to this Window
+        /// </summary>
+        private void Dialog_KeyDown(object sender, KeyEventArgs e)
+        {
+            switch (e.Key)
+            {
+                case Key.Y:
+                    DialogResult = true; //[Y] will answer 'Yes' to ask-dialog
+                    break;
+                case Key.Escape:
+                case Key.N:
+                    DialogResult = false; //[ESC] or [N] will answer 'No' to ask-dialog
+                    break;
+            }
         }
 
         /// <summary>
@@ -122,12 +138,13 @@ namespace ScreenToGif.Windows.Other
         /// <param name="title">The title of the window.</param>
         /// <param name="instruction">The main instruction.</param>
         /// <param name="observation">A complementar observation.</param>
+        /// <param name="yesAsDefault">If true, the Yes button will receive the initial focus.</param>
         /// <param name="icon">The image of the dialog.</param>
         /// <returns>True if Yes</returns>
-        public static bool Ask(string title, string instruction, string observation, Icons icon = Icons.Question)
+        public static bool Ask(string title, string instruction, string observation, bool yesAsDefault = true, Icons icon = Icons.Question)
         {
             var dialog = new Dialog();
-            dialog.PrepareAsk(title, instruction, observation.Replace(@"\n", Environment.NewLine).Replace(@"\r", ""), icon);
+            dialog.PrepareAsk(title, instruction, observation.Replace(@"\n", Environment.NewLine).Replace(@"\r", ""), yesAsDefault, icon);
             var result = dialog.ShowDialog();
 
             return result.HasValue && result.Value;
@@ -149,35 +166,35 @@ namespace ScreenToGif.Windows.Other
 
         #endregion
         
-        /// <summary>
-        /// Dialog Icons.
-        /// </summary>
-        public enum Icons
-        {
-            /// <summary>
-            /// Information. Blue.
-            /// </summary>
-            Info,
+        ///// <summary>
+        ///// Dialog Icons.
+        ///// </summary>
+        //public enum Icons
+        //{
+        //    /// <summary>
+        //    /// Information. Blue.
+        //    /// </summary>
+        //    Info,
 
-            /// <summary>
-            /// Warning, yellow.
-            /// </summary>
-            Warning,
+        //    /// <summary>
+        //    /// Warning, yellow.
+        //    /// </summary>
+        //    Warning,
 
-            /// <summary>
-            /// Error, red.
-            /// </summary>
-            Error,
+        //    /// <summary>
+        //    /// Error, red.
+        //    /// </summary>
+        //    Error,
 
-            /// <summary>
-            /// Success, green.
-            /// </summary>
-            Success,
+        //    /// <summary>
+        //    /// Success, green.
+        //    /// </summary>
+        //    Success,
 
-            /// <summary>
-            /// A question mark, blue.
-            /// </summary>
-            Question,
-        }
+        //    /// <summary>
+        //    /// A question mark, blue.
+        //    /// </summary>
+        //    Question,
+        //}
     }
 }

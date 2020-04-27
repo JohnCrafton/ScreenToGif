@@ -5,6 +5,7 @@ using System.Windows.Media;
 
 namespace ScreenToGif.Controls
 {
+    /// <inheritdoc />
     /// <summary>
     /// InkCanvasControl class extending the InkCanvas class
     /// </summary>
@@ -15,8 +16,8 @@ namespace ScreenToGif.Controls
         /// </summary>
         public new StylusShape EraserShape
         {
-            get { return (StylusShape) GetValue(EraserShapeProperty); }
-            set { SetValue(EraserShapeProperty, value); }
+            get => (StylusShape) GetValue(EraserShapeProperty);
+            set => SetValue(EraserShapeProperty, value);
         }
 
         // Using a DependencyProperty as the backing store for EraserShape.  
@@ -31,9 +32,7 @@ namespace ScreenToGif.Controls
         /// <param name="e">event args</param>
         private static void OnEraserShapePropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
-            var canvas = d as InkCanvasExtended;
-
-            if (canvas == null)
+            if (!(d is InkCanvasExtended canvas))
                 return;
 
             canvas.EraserShape = (StylusShape) e.NewValue;

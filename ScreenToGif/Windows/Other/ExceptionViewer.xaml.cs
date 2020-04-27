@@ -3,9 +3,6 @@ using System.Windows;
 
 namespace ScreenToGif.Windows.Other
 {
-    /// <summary>
-    /// Interaction logic for ExceptionViewer.xaml
-    /// </summary>
     public partial class ExceptionViewer
     {
         #region Variables
@@ -18,7 +15,8 @@ namespace ScreenToGif.Windows.Other
         /// Default constructor.
         /// </summary>
         /// <param name="ex">The Exception to show.</param>
-        public ExceptionViewer(Exception ex)
+        /// <param name="aditional">Aditional details.</param>
+        public ExceptionViewer(Exception ex, string aditional = null)
         {
             InitializeComponent();
 
@@ -28,16 +26,18 @@ namespace ScreenToGif.Windows.Other
 
             TypeLabel.Content = ex.GetType().Name;
             MessageTextBox.Text = ex.Message;
-            StackTextBox.Text = ex.StackTrace;
+            StackTextBox.Text = (!string.IsNullOrWhiteSpace(aditional) ? aditional + Environment.NewLine : "") + ex.StackTrace;
             SourceTextBox.Text = ex.Source;
 
             if (ex.TargetSite != null)
                 SourceTextBox.Text += "." + ex.TargetSite.Name;
 
+            //If there's aditional details.
+            if (!string.IsNullOrEmpty(ex.HelpLink))
+                StackTextBox.Text += Environment.NewLine + Environment.NewLine + ex.HelpLink;
+
             if (ex.InnerException != null)
-            {
                 InnerButton.IsEnabled = true;
-            }
 
             #endregion
         }

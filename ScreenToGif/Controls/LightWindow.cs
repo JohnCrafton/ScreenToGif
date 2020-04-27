@@ -11,49 +11,41 @@ using ScreenToGif.Util;
 namespace ScreenToGif.Controls
 {
     /// <summary>
-    /// Light Window used by the Recorder.
+    /// Light Window used by some recorder windows.
     /// </summary>
-    public class LightWindow : Window
+    public class LightWindow : RecorderWindow
     {
+        private HwndSource _hwndSource;
+
         #region Dependency Property
 
-        public static readonly DependencyProperty FrameCountProperty = DependencyProperty.Register("FrameCount", typeof(int), typeof(LightWindow),
-            new FrameworkPropertyMetadata(0, FrameworkPropertyMetadataOptions.AffectsRender));
-
-        public static readonly DependencyProperty ChildProperty = DependencyProperty.Register("Child", typeof(UIElement), typeof(LightWindow),
+        public static readonly DependencyProperty ChildProperty = DependencyProperty.Register(nameof(Child), typeof(UIElement), typeof(LightWindow),
             new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
 
-        public static readonly DependencyProperty MaxSizeProperty = DependencyProperty.Register("MaxSize", typeof(double), typeof(LightWindow),
+        public static readonly DependencyProperty MaxSizeProperty = DependencyProperty.Register(nameof(MaxSize), typeof(double), typeof(LightWindow),
             new FrameworkPropertyMetadata(26.0, FrameworkPropertyMetadataOptions.AffectsRender));
 
-        public static readonly DependencyProperty BackVisibilityProperty = DependencyProperty.Register("BackVisibility", typeof(Visibility), typeof(LightWindow),
+        public static readonly DependencyProperty BackVisibilityProperty = DependencyProperty.Register(nameof(BackVisibility), typeof(Visibility), typeof(LightWindow),
             new FrameworkPropertyMetadata(Visibility.Visible, FrameworkPropertyMetadataOptions.AffectsRender));
 
-        public static readonly DependencyProperty MinimizeVisibilityProperty = DependencyProperty.Register("MinimizeVisibility", typeof(Visibility), typeof(LightWindow),
+        public static readonly DependencyProperty MinimizeVisibilityProperty = DependencyProperty.Register(nameof(MinimizeVisibility), typeof(Visibility), typeof(LightWindow),
             new FrameworkPropertyMetadata(Visibility.Visible, FrameworkPropertyMetadataOptions.AffectsRender));
 
-        public static readonly DependencyProperty IsRecordingProperty = DependencyProperty.Register("IsRecording", typeof(bool), typeof(LightWindow),
+        public static readonly DependencyProperty IsRecordingProperty = DependencyProperty.Register(nameof(IsRecording), typeof(bool), typeof(LightWindow),
             new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsRender));
 
-        public static readonly DependencyProperty IsThinProperty = DependencyProperty.Register("IsThin", typeof(bool), typeof(LightWindow),
+        public static readonly DependencyProperty IsThinProperty = DependencyProperty.Register(nameof(IsThin), typeof(bool), typeof(LightWindow),
             new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsRender));
 
-        public static readonly DependencyProperty IsFullScreenProperty = DependencyProperty.Register("IsFullScreen", typeof(bool), typeof(LightWindow),
+        public static readonly DependencyProperty IsFullScreenProperty = DependencyProperty.Register(nameof(IsFullScreen), typeof(bool), typeof(LightWindow),
             new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsRender));
+
+        public static readonly DependencyProperty IsFollowingProperty = DependencyProperty.Register(nameof(IsFollowing), typeof(bool), typeof(LightWindow), 
+            new PropertyMetadata(false, IsFollowing_PropertyChanged));
 
         #endregion
 
         #region Property Accessor
-
-        /// <summary>
-        /// The frame count of the current recording.
-        /// </summary>
-        [Bindable(true), Category("Common"), Description("The frame count of the current recording.")]
-        public int FrameCount
-        {
-            get { return (int)GetValue(FrameCountProperty); }
-            set { SetValue(FrameCountProperty, value); }
-        }
 
         /// <summary>
         /// The Image of the caption bar.
@@ -61,8 +53,8 @@ namespace ScreenToGif.Controls
         [Bindable(true), Category("Common"), Description("The Image of the caption bar.")]
         public UIElement Child
         {
-            get { return (UIElement)GetValue(ChildProperty); }
-            set { SetCurrentValue(ChildProperty, value); }
+            get => (UIElement)GetValue(ChildProperty);
+            set => SetCurrentValue(ChildProperty, value);
         }
 
         /// <summary>
@@ -71,8 +63,8 @@ namespace ScreenToGif.Controls
         [Bindable(true), Category("Common"), Description("The maximum size of the image.")]
         public double MaxSize
         {
-            get { return (double)GetValue(MaxSizeProperty); }
-            set { SetCurrentValue(MaxSizeProperty, value); }
+            get => (double)GetValue(MaxSizeProperty);
+            set => SetCurrentValue(MaxSizeProperty, value);
         }
 
         /// <summary>
@@ -81,8 +73,8 @@ namespace ScreenToGif.Controls
         [Bindable(true), Category("Common"), Description("Back button visibility.")]
         public Visibility BackVisibility
         {
-            get { return (Visibility)GetValue(BackVisibilityProperty); }
-            set { SetCurrentValue(BackVisibilityProperty, value); }
+            get => (Visibility)GetValue(BackVisibilityProperty);
+            set => SetCurrentValue(BackVisibilityProperty, value);
         }
 
         /// <summary>
@@ -91,8 +83,8 @@ namespace ScreenToGif.Controls
         [Bindable(true), Category("Common"), Description("Minimize button visibility.")]
         public Visibility MinimizeVisibility
         {
-            get { return (Visibility)GetValue(MinimizeVisibilityProperty); }
-            set { SetCurrentValue(MinimizeVisibilityProperty, value); }
+            get => (Visibility)GetValue(MinimizeVisibilityProperty);
+            set => SetCurrentValue(MinimizeVisibilityProperty, value);
         }
 
         /// <summary>
@@ -101,8 +93,8 @@ namespace ScreenToGif.Controls
         [Bindable(true), Category("Common"), Description("If in recording mode.")]
         public bool IsRecording
         {
-            get { return (bool)GetValue(IsRecordingProperty); }
-            set { SetCurrentValue(IsRecordingProperty, value); }
+            get => (bool)GetValue(IsRecordingProperty);
+            set => SetCurrentValue(IsRecordingProperty, value);
         }
 
         /// <summary>
@@ -111,8 +103,8 @@ namespace ScreenToGif.Controls
         [Bindable(true), Category("Common"), Description("Thin mode (hides the title bar).")]
         public bool IsThin
         {
-            get { return (bool)GetValue(IsThinProperty); }
-            set { SetCurrentValue(IsThinProperty, value); }
+            get => (bool)GetValue(IsThinProperty);
+            set => SetCurrentValue(IsThinProperty, value);
         }
 
         /// <summary>
@@ -121,22 +113,92 @@ namespace ScreenToGif.Controls
         [Bindable(true), Category("Common"), Description("Fullscreen mode (hides the title bar and a few other things).")]
         public bool IsFullScreen
         {
-            get { return (bool)GetValue(IsFullScreenProperty); }
-            set { SetCurrentValue(IsFullScreenProperty, value); }
+            get => (bool)GetValue(IsFullScreenProperty);
+            set => SetCurrentValue(IsFullScreenProperty, value);
+        }
+
+        /// <summary>
+        /// True if the window should follow the mouse cursor.
+        /// </summary>
+        public bool IsFollowing
+        {
+            get => (bool)GetValue(IsFollowingProperty);
+            set => SetValue(IsFollowingProperty, value);
         }
 
         #endregion
 
-        #region Constructors
 
         static LightWindow()
         {
             DefaultStyleKeyProperty.OverrideMetadata(typeof(LightWindow), new FrameworkPropertyMetadata(typeof(LightWindow)));
         }
 
+
+        #region Overrides
+
+        public override void OnApplyTemplate()
+        {
+            if (GetTemplateChild("BackButton") is ImageButton backButton)
+                backButton.Click += BackClick;
+
+            if (GetTemplateChild("MinimizeButton") is Button minimizeButton)
+                minimizeButton.Click += MinimizeClick;
+
+            if (GetTemplateChild("CloseButton") is Button closeButton)
+                closeButton.Click += CloseClick;
+
+            if (GetTemplateChild("MoveGrid") is Grid moveGrid)
+                moveGrid.PreviewMouseDown += MoveGrid_PreviewMouseDown;
+
+            if (GetTemplateChild("MainGrid") is Grid resizeGrid)
+            {
+                foreach (var element in resizeGrid.Children.OfType<Rectangle>())
+                    element.PreviewMouseDown += ResizeRectangle_PreviewMouseDown;
+            }
+
+            base.OnApplyTemplate();
+        }
+
+        protected override void OnInitialized(EventArgs e)
+        {
+            SourceInitialized += Window_SourceInitialized;
+
+            base.OnInitialized(e);
+        }
+
         #endregion
 
-        #region Click Events
+        #region Methods
+
+        private void ResizeWindow(ResizeDirection direction)
+        {
+            Native.SendMessage(_hwndSource.Handle, 0x112, (IntPtr)(61440 + direction), IntPtr.Zero);
+        }
+
+        internal void HideInternals()
+        {
+            if (GetTemplateChild("MainBorder") is Border border)
+                border.Visibility = Visibility.Hidden;
+        }
+
+        internal void ShowInternals()
+        {
+            if (GetTemplateChild("MainBorder") is Border border)
+                border.Visibility = Visibility.Visible;
+        }
+        
+        internal virtual void OnFollowingChanged() 
+        { }
+
+        #endregion
+
+        #region Events
+
+        private void Window_SourceInitialized(object sender, EventArgs e)
+        {
+            _hwndSource = (HwndSource)PresentationSource.FromVisual(this);
+        }
 
         private void BackClick(object sender, RoutedEventArgs routedEventArgs)
         {
@@ -154,74 +216,22 @@ namespace ScreenToGif.Controls
             {
                 WindowState = WindowState.Maximized;
 
-                var button = sender as Button;
-                if (button != null) button.Content = FindResource("Vector.Restore");
+                if (sender is Button button) 
+                    button.Content = FindResource("Vector.Restore");
             }
             else
             {
                 WindowState = WindowState.Normal;
 
-                var button = sender as Button;
-                if (button != null) button.Content = FindResource("Vector.Maximize");
+                if (sender is Button button) 
+                    button.Content = FindResource("Vector.Maximize");
             }
         }
 
         private void CloseClick(object sender, RoutedEventArgs e)
         {
-            DialogResult = true;
+            Close();
         }
-
-        #endregion
-
-        #region Initializers
-
-        public override void OnApplyTemplate()
-        {
-            var backButton = GetTemplateChild("BackButton") as ImageButton;
-            if (backButton != null)
-                backButton.Click += BackClick;
-
-            var minimizeButton = GetTemplateChild("MinimizeButton") as Button;
-            if (minimizeButton != null)
-                minimizeButton.Click += MinimizeClick;
-
-            var closeButton = GetTemplateChild("CloseButton") as Button;
-            if (closeButton != null)
-                closeButton.Click += CloseClick;
-
-            var moveGrid = GetTemplateChild("MoveGrid") as Grid;
-            if (moveGrid != null)
-                moveGrid.PreviewMouseDown += MoveGrid_PreviewMouseDown;
-
-            var resizeGrid = GetTemplateChild("MainGrid") as Grid;
-            if (resizeGrid != null)
-            {
-                foreach (var element in resizeGrid.Children.OfType<Rectangle>())
-                {
-                    element.PreviewMouseDown += ResizeRectangle_PreviewMouseDown;
-                }
-            }
-
-            base.OnApplyTemplate();
-        }
-
-        private HwndSource _hwndSource;
-
-        protected override void OnInitialized(EventArgs e)
-        {
-            SourceInitialized += OnSourceInitialized;
-
-            base.OnInitialized(e);
-        }
-
-        private void OnSourceInitialized(object sender, EventArgs e)
-        {
-            _hwndSource = (HwndSource)PresentationSource.FromVisual(this);
-        }
-
-        #endregion
-
-        #region Drag
 
         private void MoveGrid_PreviewMouseDown(object sender, MouseButtonEventArgs e)
         {
@@ -229,17 +239,13 @@ namespace ScreenToGif.Controls
                 DragMove();
         }
 
-        #endregion
-
-        #region Resize
-
         private void ResizeRectangle_PreviewMouseDown(object sender, MouseButtonEventArgs e)
         {
-            if (e.ChangedButton != MouseButton.Left) return;
+            if (e.ChangedButton != MouseButton.Left)
+                return;
 
-            var rectangle = sender as Rectangle;
-
-            if (rectangle == null) return;
+            if (!(sender is Rectangle rectangle))
+                return;
 
             switch (rectangle.Name)
             {
@@ -270,21 +276,12 @@ namespace ScreenToGif.Controls
             }
         }
 
-        private void ResizeWindow(ResizeDirection direction)
+        private static void IsFollowing_PropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
-            Native.SendMessage(_hwndSource.Handle, 0x112, (IntPtr)(61440 + direction), IntPtr.Zero);
-        }
+            if (!(d is LightWindow win))
+                return;
 
-        private enum ResizeDirection
-        {
-            Left = 1,
-            Right = 2,
-            Top = 3,
-            TopLeft = 4,
-            TopRight = 5,
-            Bottom = 6,
-            BottomLeft = 7,
-            BottomRight = 8
+            win.OnFollowingChanged();
         }
 
         #endregion

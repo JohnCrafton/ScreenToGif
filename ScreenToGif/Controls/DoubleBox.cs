@@ -15,6 +15,8 @@ namespace ScreenToGif.Controls
         #region Variables
 
         private bool _ignore;
+        private string _baseFormat = "{0:###,###,###,###,##0.";
+        private string _format = "{0:###,###,###,###,##0.00}";
 
         #endregion
 
@@ -29,6 +31,9 @@ namespace ScreenToGif.Controls
         public static readonly DependencyProperty MinimumProperty = DependencyProperty.Register("Minimum", typeof(double), typeof(DoubleBox),
             new FrameworkPropertyMetadata(0D, OnMinimumPropertyChanged));
 
+        public static readonly DependencyProperty DecimalsProperty = DependencyProperty.Register("Decimals", typeof(int), typeof(DoubleBox),
+            new FrameworkPropertyMetadata(2, OnDecimalsPropertyChanged));
+
         public static readonly DependencyProperty StepProperty = DependencyProperty.Register("StepValue", typeof(double), typeof(DoubleUpDown), 
             new FrameworkPropertyMetadata(1d));
 
@@ -40,6 +45,9 @@ namespace ScreenToGif.Controls
         public static readonly DependencyProperty DefaultValueIfEmptyProperty = DependencyProperty.Register("DefaultValueIfEmpty", typeof(double), typeof(DoubleBox),
             new FrameworkPropertyMetadata(0D));
 
+        public static readonly DependencyProperty ScaleProperty = DependencyProperty.Register("Scale", typeof(double), typeof(DoubleBox),
+            new PropertyMetadata(1d, OnScalePropertyChanged));
+
         #endregion
 
         #region Properties
@@ -47,22 +55,29 @@ namespace ScreenToGif.Controls
         [Bindable(true), Category("Common")]
         public double Maximum
         {
-            get { return (double)GetValue(MaximumProperty); }
-            set { SetValue(MaximumProperty, value); }
+            get => (double)GetValue(MaximumProperty);
+            set => SetValue(MaximumProperty, value);
         }
 
         [Bindable(true), Category("Common")]
         public double Value
         {
-            get { return (double)GetValue(ValueProperty); }
-            set { SetValue(ValueProperty, value); }
+            get => (double)GetValue(ValueProperty);
+            set => SetValue(ValueProperty, value);
         }
 
         [Bindable(true), Category("Common")]
         public double Minimum
         {
-            get { return (double)GetValue(MinimumProperty); }
-            set { SetValue(MinimumProperty, value); }
+            get => (double)GetValue(MinimumProperty);
+            set => SetValue(MinimumProperty, value);
+        }
+
+        [Bindable(true), Category("Common")]
+        public int Decimals
+        {
+            get => (int)GetValue(DecimalsProperty);
+            set => SetValue(DecimalsProperty, value);
         }
 
         /// <summary>
@@ -71,29 +86,36 @@ namespace ScreenToGif.Controls
         [Description("The Increment/Decrement value.")]
         public double StepValue
         {
-            get { return (double)GetValue(StepProperty); }
-            set { SetValue(StepProperty, value); }
+            get => (double)GetValue(StepProperty);
+            set => SetValue(StepProperty, value);
         }
 
         [Bindable(true), Category("Common")]
         public bool UpdateOnInput
         {
-            get { return (bool)GetValue(UpdateOnInputProperty); }
-            set { SetValue(UpdateOnInputProperty, value); }
+            get => (bool)GetValue(UpdateOnInputProperty);
+            set => SetValue(UpdateOnInputProperty, value);
         }
 
         [Bindable(true), Category("Common")]
         public bool IsObligatory
         {
-            get { return (bool)GetValue(IsObligatoryProperty); }
-            set { SetValue(IsObligatoryProperty, value); }
+            get => (bool)GetValue(IsObligatoryProperty);
+            set => SetValue(IsObligatoryProperty, value);
         }
 
         [Bindable(true), Category("Common")]
         public double DefaultValueIfEmpty
         {
-            get { return (double)GetValue(DefaultValueIfEmptyProperty); }
-            set { SetValue(DefaultValueIfEmptyProperty, value); }
+            get => (double)GetValue(DefaultValueIfEmptyProperty);
+            set => SetValue(DefaultValueIfEmptyProperty, value);
+        }
+
+        [Bindable(true), Category("Common")]
+        public double Scale
+        {
+            get => (double)GetValue(ScaleProperty);
+            set => SetValue(ScaleProperty, value);
         }
 
         #endregion
@@ -102,17 +124,17 @@ namespace ScreenToGif.Controls
 
         private static void OnMaximumPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
-            var doubleBox = d as DoubleBox;
+            if (!(d is DoubleBox doubleBox))
+                return;
 
-            if (doubleBox?.Value > doubleBox?.Maximum)
+            if (doubleBox.Value > doubleBox.Maximum)
                 doubleBox.Value = doubleBox.Maximum;
         }
 
         private static void OnValuePropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
-            var doubleBox = d as DoubleBox;
-
-            if (doubleBox == null) return;
+            if (!(d is DoubleBox doubleBox))
+                return;
 
             if (doubleBox.Value > doubleBox.Maximum)
                 doubleBox.Value = doubleBox.Maximum;
@@ -120,18 +142,36 @@ namespace ScreenToGif.Controls
             else if (doubleBox.Value < doubleBox.Minimum)
                 doubleBox.Value = doubleBox.Minimum;
 
+            doubleBox.Value = Math.Round(doubleBox.Value, doubleBox.Decimals);
+
             if (!doubleBox._ignore)
-                doubleBox.Text = doubleBox.Text = string.Format(CultureInfo.CurrentCulture, "{0:###,###,##0.0###}", doubleBox.Value);
+            {
+                var value = string.Format(CultureInfo.CurrentCulture, doubleBox._format, doubleBox.Value * doubleBox.Scale);
+
+                if (!string.Equals(doubleBox.Text, value))
+                    doubleBox.Text = value;
+            }
 
             doubleBox.RaiseValueChangedEvent();
         }
 
         private static void OnMinimumPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
-            var doubleBox = d as DoubleBox;
+            if (!(d is DoubleBox doubleBox))
+                return;
 
-            if (doubleBox?.Value < doubleBox?.Minimum)
+            if (doubleBox.Value < doubleBox.Minimum)
                 doubleBox.Value = doubleBox.Minimum;
+        }
+
+        private static void OnDecimalsPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            if (!(d is DoubleBox doubleBox))
+                return;
+
+            doubleBox._format = doubleBox._baseFormat + "".PadRight(doubleBox.Decimals, '0') + "}";
+
+            doubleBox.Value = Math.Round(doubleBox.Value, doubleBox.Decimals);
         }
 
         private static void OnUpdateOnInputPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -139,28 +179,38 @@ namespace ScreenToGif.Controls
             ((DoubleBox)d).UpdateOnInput = (bool)e.NewValue;
         }
 
+        private static void OnScalePropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+        {
+            if (!(d is DoubleBox doubleBox)) return;
+
+            //The scale value dictates the value being displayed.
+            //For example, The value 600 and the scale 1.25 should display the text 750.
+            //Text = Value * Scale.
+
+            doubleBox.Text = string.Format(CultureInfo.CurrentCulture, doubleBox._format, doubleBox.Value * doubleBox.Scale);
+        }
+
         #endregion
 
         #region Custom Events
 
-        /// <summary>
-        /// Create a custom routed event by first registering a RoutedEventID, this event uses the bubbling routing strategy.
-        /// </summary>
-        public static readonly RoutedEvent ValueChangedEvent;
+        public static readonly RoutedEvent ValueChangedEvent = EventManager.RegisterRoutedEvent("ValueChanged", RoutingStrategy.Bubble, typeof(RoutedEventHandler), typeof(DoubleBox));
 
         /// <summary>
         /// Event raised when the numeric value is changed.
         /// </summary>
         public event RoutedEventHandler ValueChanged
         {
-            add { AddHandler(ValueChangedEvent, value); } 
-            remove { RemoveHandler(ValueChangedEvent, value); }
+            add => AddHandler(ValueChangedEvent, value);
+            remove => RemoveHandler(ValueChangedEvent, value);
         }
 
         public void RaiseValueChangedEvent()
         {
-            var newEventArgs = new RoutedEventArgs(ValueChangedEvent);
-            RaiseEvent(newEventArgs);
+            if (ValueChangedEvent == null)
+                return;
+
+            RaiseEvent(new RoutedEventArgs(ValueChangedEvent));
         }
 
         #endregion
@@ -178,11 +228,22 @@ namespace ScreenToGif.Controls
 
             AddHandler(DataObject.PastingEvent, new DataObjectPastingEventHandler(OnPasting));
 
-            Text = string.Format(CultureInfo.CurrentCulture, "{0:###,###,##0.0###}", Value);
+            _format = _baseFormat + "".PadRight(Decimals, '0') + "}";
+        }
+
+        protected override void OnInitialized(EventArgs e)
+        {
+            base.OnInitialized(e);
+
+            Text = string.Format(CultureInfo.CurrentCulture, _format, Value);
         }
 
         protected override void OnPreviewMouseLeftButtonDown(MouseButtonEventArgs e)
         {
+            //Only sets the focus if not clicking on the Up/Down buttons of a IntegerUpDown.
+            if (e.OriginalSource is TextBlock || e.OriginalSource is Border)
+                return;
+
             if (!IsKeyboardFocusWithin)
             {
                 e.Handled = true;
@@ -194,7 +255,8 @@ namespace ScreenToGif.Controls
         {
             base.OnGotFocus(e);
 
-            SelectAll();
+            if (e.Source is DoubleBox)
+                SelectAll();
         }
 
         protected override void OnPreviewTextInput(TextCompositionEventArgs e)
@@ -216,7 +278,7 @@ namespace ScreenToGif.Controls
 
         protected override void OnTextChanged(TextChangedEventArgs e)
         {
-            if (!UpdateOnInput)
+            if (!UpdateOnInput || _ignore)
                 return;
 
             if (string.IsNullOrEmpty(Text)) return;
@@ -224,7 +286,7 @@ namespace ScreenToGif.Controls
 
             _ignore = true;
 
-            Value = Convert.ToDouble(Text, CultureInfo.CurrentCulture);
+            Value = Math.Round(Convert.ToDouble(Text, CultureInfo.CurrentCulture) / Scale, Decimals);
 
             _ignore = false;
 
@@ -245,25 +307,26 @@ namespace ScreenToGif.Controls
 
                 _ignore = true;
 
-                Value = Convert.ToInt32(Text, CultureInfo.CurrentCulture);
+                Value = Convert.ToDouble(Text, CultureInfo.CurrentCulture);
+                Text = string.Format(CultureInfo.CurrentCulture, _format, Value);
 
                 _ignore = false;
                 return;
             }
 
-            Text = string.Format(CultureInfo.CurrentCulture, "{0:###,###,##0.0###}", Value);
+            Text = string.Format(CultureInfo.CurrentCulture, _format, Value);
         }
 
-        //protected override void OnKeyDown(KeyEventArgs e)
-        //{
-        //    if (e.Key == Key.Enter || e.Key == Key.Return)
-        //    {
-        //        e.Handled = true;
-        //        MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
-        //    }
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter || e.Key == Key.Return)
+            {
+                e.Handled = true;
+                MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+            }
 
-        //    base.OnKeyDown(e);
-        //}
+            base.OnKeyDown(e);
+        }
 
         protected override void OnMouseWheel(MouseWheelEventArgs e)
         {
@@ -293,9 +356,7 @@ namespace ScreenToGif.Controls
                 var text = e.DataObject.GetData(typeof(string)) as string;
 
                 if (!IsTextAllowed(text))
-                {
                     e.CancelCommand();
-                }
             }
             else
             {
@@ -310,7 +371,7 @@ namespace ScreenToGif.Controls
         private bool IsEntryAllowed(TextBox textBox, string text)
         {
             //Digits, points or commas.
-            var regex = new Regex(@"^[0-9]|\.|\,$");
+            var regex = new Regex(@"^[0-9]|\.|\,$"); //TODO: Support for multiple cultures.
 
             //Checks if it's a valid char based on the context.
             return regex.IsMatch(text) && IsEntryAllowedInContext(textBox, text);
@@ -324,9 +385,9 @@ namespace ScreenToGif.Controls
 
             #region Thousands
 
-            var thousands = Thread.CurrentThread.CurrentUICulture.NumberFormat.NumberGroupSeparator;
+            var thousands = Thread.CurrentThread.CurrentCulture.NumberFormat.NumberGroupSeparator;
             var thousandsChar = thousands.ToCharArray().FirstOrDefault();
-            var decimals = Thread.CurrentThread.CurrentUICulture.NumberFormat.NumberDecimalSeparator;
+            var decimals = Thread.CurrentThread.CurrentCulture.NumberFormat.NumberDecimalSeparator;
             var decimalsChar = decimals.ToCharArray().FirstOrDefault();
 
             if (next.Equals(thousands))
@@ -386,8 +447,10 @@ namespace ScreenToGif.Controls
 
         private bool IsTextAllowed(string text)
         {
-            var regex = new Regex(@"^((\d+)|(\d{1,3}(\.\d{3})+)|(\d{1,3}(\.\d{3})(\,\d{3})+))((\,\d{4})|(\,\d{3})|(\,\d{2})|(\,\d{1})|(\,))?$");
-            return regex.IsMatch(text);
+            return double.TryParse(text, out double result);
+
+            //var regex = new Regex(@"^((\d+)|(\d{1,3}(\.\d{3})+)|(\d{1,3}(\.\d{3})(\,\d{3})+))((\,\d{4})|(\,\d{3})|(\,\d{2})|(\,\d{1})|(\,))?$", RegexOptions.CultureInvariant);
+            //return regex.IsMatch(text);
         }
 
         #endregion

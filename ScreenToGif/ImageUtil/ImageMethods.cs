@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Data;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -11,13 +12,17 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Resources;
+using ScreenToGif.ImageUtil.Gif.Decoder;
+using ScreenToGif.ImageUtil.Gif.Encoder;
 using ScreenToGif.Util;
 using Color = System.Drawing.Color;
 using Image = System.Drawing.Image;
 using PixelFormat = System.Windows.Media.PixelFormat;
 using Size = System.Drawing.Size;
-using ScreenToGif.ImageUtil.Decoder;
-using ScreenToGif.Util.Model;
+using ScreenToGif.ImageUtil.Gif.LegacyEncoder;
+using ScreenToGif.Model;
+using GifFile = ScreenToGif.ImageUtil.Gif.Decoder.GifFile;
 
 namespace ScreenToGif.ImageUtil
 {
@@ -28,16 +33,7 @@ namespace ScreenToGif.ImageUtil
     {
         #region Paint Transparent
 
-        /// <summary>
-        /// Analizes all frames (from the end to the start) and paints all unchanged pixels with a given color, 
-        /// after, it cuts the image to reduce filesize.
-        /// </summary>
-        /// <param name="listToEncode">The list of frames to analize.</param>
-        /// <param name="transparent">The color to paint the unchanged pixels.</param>
-        /// <param name="id">The Id of the current Task.</param>
-        /// <param name="tokenSource">The cancelation token source.</param>
-        /// <returns>A List contaning all frames and its cut points</returns>
-        public static List<FrameInfo> PaintTransparentAndCut(List<FrameInfo> listToEncode, Color transparent, int id, CancellationTokenSource tokenSource)
+        public static List<FrameInfo> PaintTransparentAndCut(List<FrameInfo> listToEncode, System.Windows.Media.Color transparent, int id, CancellationTokenSource tokenSource)
         {
             //First frame rect.
             var size = listToEncode[0].Path.ScaledSize();
@@ -59,10 +55,226 @@ namespace ScreenToGif.ImageUtil
 
                 #region For each Frame, from the end to the start
 
-                Windows.Other.Encoder.Update(id, index - 1);
+                Windows.Other.Encoder.Update(id, listToEncode.Count - index - 1);
 
                 //First frame is ignored.
                 if (index <= 0) continue;
+
+                //var watch = Stopwatch.StartNew();
+
+                #region Get Image Info
+
+                var imageAux1 = listToEncode[index - 1].Path.SourceFrom();
+                var imageAux2 = listToEncode[index].Path.SourceFrom();
+
+                var startY = new bool[imageAux1.PixelHeight];
+                var startX = new bool[imageAux1.PixelWidth];
+
+                var image1 = new PixelUtil(imageAux1); //Previous image
+                var image2 = new PixelUtil(imageAux2); //Actual image
+
+                image1.LockBits();
+                image2.LockBits();
+
+                var height = imageAux1.PixelHeight;
+                var width = imageAux1.PixelWidth;
+                var blockCount = image1.Depth / 8;
+
+                #endregion
+
+                //Console.WriteLine("Lock: " + watch.Elapsed);
+
+                //Only use Parallel if the image is big enough.
+                if (width * height > 150000)
+                {
+                    #region Parallel Loop
+
+                    //x - width - sides
+                    Parallel.For(0, image1.Pixels.Length / blockCount, i =>
+                    {
+                        i = i * blockCount;
+
+                        if (image1.Pixels[i] != image2.Pixels[i] || image1.Pixels[i + 1] != image2.Pixels[i + 1] || image1.Pixels[i + 2] != image2.Pixels[i + 2])
+                        {
+                            var y = i / blockCount / image1.Width;
+                            var x = i / blockCount - (y * image1.Width);
+
+                            //var current = (y * image1.Width + x) * blockCount == i;
+
+                            startX[x] = true;
+                            startY[y] = true;
+                        }
+                        else
+                        {
+                            image2.Pixels[i] = transparent.B;
+                            image2.Pixels[i + 1] = transparent.G;
+                            image2.Pixels[i + 2] = transparent.R;
+
+                            if (blockCount == 4)
+                                image2.Pixels[i + 3] = transparent.A; //255;
+                        }
+                    });
+
+                    #endregion
+                }
+                else
+                {
+                    #region Sequential loop
+
+                    for (var i = 0; i < image1.Pixels.Length; i += blockCount)
+                    {
+                        if (image1.Pixels[i] != image2.Pixels[i] || image1.Pixels[i + 1] != image2.Pixels[i + 1] || image1.Pixels[i + 2] != image2.Pixels[i + 2])
+                        {
+                            var y = i / blockCount / image1.Width;
+                            var x = i / blockCount - (y * image1.Width);
+
+                            //var current = (y * image1.Width + x) * blockCount == i;
+
+                            startX[x] = true;
+                            startY[y] = true;
+                        }
+                        else
+                        {
+                            image2.Pixels[i] = transparent.B;
+                            image2.Pixels[i + 1] = transparent.G;
+                            image2.Pixels[i + 2] = transparent.R;
+
+                            if (blockCount == 4)
+                                image2.Pixels[i + 3] = transparent.A; //255;
+                        }
+                    }
+
+                    #endregion
+                }
+
+                //Console.WriteLine("Change: " + watch.Elapsed);
+
+                image1.UnlockBitsWithoutCommit();
+
+                //Console.WriteLine("Unlock: " + watch.Elapsed);
+
+                #region Verify positions
+
+                var firstX = startX.ToList().FindIndex(x => x);
+                var lastX = startX.ToList().FindLastIndex(x => x);
+
+                if (firstX == -1)
+                    firstX = 0;
+                if (lastX == -1)
+                    lastX = imageAux1.PixelWidth;
+
+                var firstY = startY.ToList().FindIndex(x => x);
+                var lastY = startY.ToList().FindLastIndex(x => x);
+
+                if (lastY == -1)
+                    lastY = imageAux1.PixelHeight;
+                if (firstY == -1)
+                    firstY = 0;
+
+                if (lastX < firstX)
+                {
+                    var aux = lastX;
+                    lastX = firstX;
+                    firstX = aux;
+                }
+
+                if (lastY < firstY)
+                {
+                    var aux = lastY;
+                    lastY = firstY;
+                    firstY = aux;
+                }
+
+                #endregion
+
+                #region Get the Width and Height
+
+                var heightCut = Math.Abs(lastY - firstY);
+                var widthCut = Math.Abs(lastX - firstX);
+
+                //If nothing changed, shift the delay.
+                if (heightCut + widthCut == height + width)
+                {
+                    //TODO: Maximum of 2 bytes, 255 x 100: 25.500 ms
+                    listToEncode[index - 1].Delay += listToEncode[index].Delay;
+                    listToEncode[index].Rect = new Int32Rect(0, 0, 0, 0);
+
+                    GC.Collect(1);
+                    continue;
+                }
+
+                if (heightCut != height)
+                    heightCut++;
+
+                if (widthCut != width)
+                    widthCut++;
+
+                listToEncode[index].Rect = new Int32Rect(firstX, firstY, widthCut, heightCut);
+
+                #endregion
+
+                #region Update Image
+
+                using (var fileStream = new FileStream(listToEncode[index].Path, FileMode.Create))
+                {
+                    BitmapEncoder encoder = new PngBitmapEncoder();
+                    encoder.Frames.Add(BitmapFrame.Create(image2.UnlockBitsAndCrop(new Int32Rect(firstX, firstY, widthCut, heightCut))));
+                    encoder.Save(fileStream);
+                }
+
+                imageAux1 = null;
+                imageAux2 = null;
+
+                #endregion
+
+                //Console.WriteLine("Save: " + watch.Elapsed);
+                //Console.WriteLine();
+
+                GC.Collect(1);
+
+                #endregion
+            }
+
+            return listToEncode;
+        }
+
+        /// <summary>
+        /// Analizes all frames (from the end to the start) and paints all unchanged pixels with a given color, 
+        /// after, it cuts the image to reduce filesize.
+        /// </summary>
+        /// <param name="listToEncode">The list of frames to analize.</param>
+        /// <param name="transparent">The color to paint the unchanged pixels.</param>
+        /// <param name="id">The Id of the current Task.</param>
+        /// <param name="tokenSource">The cancelation token source.</param>
+        /// <returns>A List contaning all frames and its cut points</returns>
+        public static List<FrameInfo> PaintTransparentAndCutOld(List<FrameInfo> listToEncode, Color transparent, int id, CancellationTokenSource tokenSource)
+        {
+            //First frame rect.
+            var size = listToEncode[0].Path.ScaledSize();
+            listToEncode[0].Rect = new Int32Rect(0, 0, (int)size.Width, (int)size.Height);
+
+            //End to start FOR
+            for (var index = listToEncode.Count - 1; index > 0; index--)
+            {
+                #region Cancellation
+
+                if (tokenSource.Token.IsCancellationRequested)
+                {
+                    Windows.Other.Encoder.SetStatus(Status.Canceled, id);
+
+                    break;
+                }
+
+                #endregion
+
+                #region For each Frame, from the end to the start
+
+                Windows.Other.Encoder.Update(id, listToEncode.Count - index - 1);
+
+                //First frame is ignored.
+                if (index <= 0) continue;
+
+                //var watch = Stopwatch.StartNew();
 
                 #region Get Image Info
 
@@ -83,6 +295,8 @@ namespace ScreenToGif.ImageUtil
 
                 #endregion
 
+                //Console.WriteLine("Lock: " + watch.Elapsed);
+
                 //Only use Parallel if the image is big enough.
                 if (width * height > 150000)
                 {
@@ -94,7 +308,9 @@ namespace ScreenToGif.ImageUtil
                         //y - height - up/down
                         for (var y = 0; y < height; y++)
                         {
-                            if (image1.GetPixel(x, y) == image2.GetPixel(x, y))
+                            var pixel2 = image2.GetPixel(x, y);
+
+                            if (image1.GetPixel(x, y) == pixel2 || pixel2.A == 0)
                             {
                                 image2.SetPixel(x, y, transparent);
                             }
@@ -124,7 +340,9 @@ namespace ScreenToGif.ImageUtil
                         {
                             #region For each Pixel
 
-                            if (image1.GetPixel(x, y) == image2.GetPixel(x, y))
+                            var pixel2 = image2.GetPixel(x, y);
+
+                            if (image1.GetPixel(x, y) == pixel2 || pixel2.A == 0)
                             {
                                 image2.SetPixel(x, y, transparent);
                             }
@@ -145,8 +363,12 @@ namespace ScreenToGif.ImageUtil
                     #endregion
                 }
 
+                //Console.WriteLine("Change: " + watch.Elapsed);
+
                 image1.UnlockBits();
                 image2.UnlockBits();
+
+                //Console.WriteLine("Unlock: " + watch.Elapsed);
 
                 #region Verify positions
 
@@ -154,25 +376,17 @@ namespace ScreenToGif.ImageUtil
                 var lastX = startX.ToList().FindLastIndex(x => x);
 
                 if (firstX == -1)
-                {
                     firstX = 0;
-                }
                 if (lastX == -1)
-                {
                     lastX = imageAux1.Width;
-                }
 
                 var firstY = startY.ToList().FindIndex(x => x);
                 var lastY = startY.ToList().FindLastIndex(x => x);
 
                 if (lastY == -1)
-                {
                     lastY = imageAux1.Height;
-                }
                 if (firstY == -1)
-                {
                     firstY = 0;
-                }
 
                 if (lastX < firstX)
                 {
@@ -219,9 +433,7 @@ namespace ScreenToGif.ImageUtil
                 #region Update Image
 
                 //Cut the images and get the new values.
-                var imageSave2 = new Bitmap(imageAux2.Clone(
-                    new Rectangle(firstX, firstY, widthCut, heightCut),
-                    imageAux2.PixelFormat));
+                var imageSave2 = new Bitmap(imageAux2.Clone(new Rectangle(firstX, firstY, widthCut, heightCut), imageAux2.PixelFormat));
 
                 imageAux2.Dispose();
                 imageAux1.Dispose();
@@ -229,6 +441,9 @@ namespace ScreenToGif.ImageUtil
                 imageSave2.Save(listToEncode[index].Path);
 
                 #endregion
+
+                //Console.WriteLine("Save: " + watch.Elapsed);
+                //Console.WriteLine();
 
                 GC.Collect(1);
 
@@ -267,7 +482,7 @@ namespace ScreenToGif.ImageUtil
 
                 #region For each Frame, from the end to the start
 
-                Windows.Other.Encoder.Update(id, index - 1);
+                Windows.Other.Encoder.Update(id, listToEncode.Count - index - 1);
 
                 //First frame is ignored.
                 if (index <= 0) continue;
@@ -432,6 +647,75 @@ namespace ScreenToGif.ImageUtil
             return listToEncode;
         }
 
+        /// <summary>
+        /// Calculates the difference between one given frame and another.
+        /// </summary>
+        /// <param name="first">The first frame to compare.</param>
+        /// <param name="second">The second frame to compare.</param>
+        /// <returns>The similarity between the two frames in percentage.</returns>
+        public static double CalculateDifference(FrameInfo first, FrameInfo second)
+        {
+            #region Get Image Info
+
+            var imageAux1 = first.Path.From();
+            var imageAux2 = second.Path.From();
+
+            var image1 = new PixelUtilOld(imageAux1); //First image
+            var image2 = new PixelUtilOld(imageAux2); //Last image
+
+            image1.LockBits();
+            image2.LockBits();
+
+            var height = imageAux1.Height;
+            var width = imageAux1.Width;
+
+            var equalCount = 0;
+
+            #endregion
+
+            //Only use Parallel if the image is big enough.
+            if (width * height > 150000)
+            {
+                #region Parallel Loop
+
+                //x - width - sides
+                Parallel.For(0, width, x =>
+                {
+                    //y - height - up/down
+                    for (var y = 0; y < height; y++)
+                    {
+                        if (image1.GetPixel(x, y) == image2.GetPixel(x, y))
+                            Interlocked.Increment(ref equalCount);
+
+                        //equalCount = equalCount + (image1.GetPixel(x, y) == image2.GetPixel(x, y) ? 1 : 0);
+                    }
+                });
+
+                #endregion
+            }
+            else
+            {
+                #region Sequential Loop
+
+                //x - width - sides
+                for (var x = 0; x < width; x++)
+                {
+                    //y - height - up/down
+                    for (var y = 0; y < height; y++)
+                        equalCount = equalCount + (image1.GetPixel(x, y) == image2.GetPixel(x, y) ? 1 : 0);
+                }
+
+                #endregion
+            }
+
+            image1.UnlockBits();
+            image2.UnlockBits();
+
+            GC.Collect(1);
+
+            return Other.CrossMultiplication(width * height, equalCount, null);
+        }
+
         #endregion
 
         #region Import From Gif
@@ -496,9 +780,7 @@ namespace ScreenToGif.ImageUtil
         public static FrameMetadata GetFrameMetadata(BitmapDecoder decoder, GifFile gifMetadata, int frameIndex)
         {
             if (gifMetadata != null && gifMetadata.Frames.Count > frameIndex)
-            {
                 return GetFrameMetadata(gifMetadata.Frames[frameIndex]);
-            }
 
             return GetFrameMetadata(decoder.Frames[frameIndex]);
         }
@@ -543,13 +825,13 @@ namespace ScreenToGif.ImageUtil
 
             var gce = gifMetadata.Extensions.OfType<GifGraphicControlExtension>().FirstOrDefault();
 
-            if (gce != null)
-            {
-                if (gce.Delay != 0)
-                    frameMetadata.Delay = TimeSpan.FromMilliseconds(gce.Delay);
+            if (gce == null) 
+                return frameMetadata;
 
-                frameMetadata.DisposalMethod = (FrameDisposalMethod)gce.DisposalMethod;
-            }
+            if (gce.Delay != 0)
+                frameMetadata.Delay = TimeSpan.FromMilliseconds(gce.Delay);
+
+            frameMetadata.DisposalMethod = (FrameDisposalMethod)gce.DisposalMethod;
 
             return frameMetadata;
         }
@@ -589,10 +871,7 @@ namespace ScreenToGif.ImageUtil
 
         public static bool IsFullFrame(FrameMetadata metadata, System.Drawing.Size fullSize)
         {
-            return metadata.Left == 0
-                   && metadata.Top == 0
-                   && metadata.Width == fullSize.Width
-                   && metadata.Height == fullSize.Height;
+            return metadata.Left == 0 && metadata.Top == 0 && metadata.Width == fullSize.Width && metadata.Height == fullSize.Height;
         }
 
         public static BitmapSource ClearArea(BitmapSource frame, FrameMetadata metadata)
@@ -697,9 +976,7 @@ namespace ScreenToGif.ImageUtil
             {
                 //Recreate the frame from the MemoryStream
                 using (var bmp = new Bitmap(ms))
-                {
-                    return (Bitmap)bmp.Clone();
-                }
+                    return (Bitmap) bmp.Clone();
             }
         }
 
@@ -762,6 +1039,36 @@ namespace ScreenToGif.ImageUtil
             return isCreated ? bitmapImage : null;
         }
 
+        public static BitmapSource FromArray(List<byte> data, int w, int h, int ch)
+        {
+            var format = PixelFormats.Default;
+
+            if (ch == 1) 
+                format = PixelFormats.Gray8; //Grey scale image 0-255.
+            else if (ch == 3) 
+                format = PixelFormats.Bgr24; //RGB.
+            else if (ch == 4) 
+                format = PixelFormats.Bgr32; //RGB + alpha.
+
+            for (var i = data.Count - 1; i < w * h * ch; i++)
+                data.Add(0);
+
+            var wbm = new WriteableBitmap(w, h, 96, 96, format, null);
+            wbm.WritePixels(new Int32Rect(0, 0, w, h), data.ToArray(), ch * w, 0);
+
+            return wbm;
+        }
+
+        public static void SavePixelArrayToFile(byte[] pixels, int width, int height, int channels, string filePath)
+        {
+            using (var fileStream = new FileStream(filePath, FileMode.Create))
+            {
+                BitmapEncoder encoder = new PngBitmapEncoder();
+                encoder.Frames.Add(BitmapFrame.Create(FromArray(pixels.ToList(), width, height, channels)));
+                encoder.Save(fileStream);
+            }
+        }
+
         #endregion
 
         #region Edit Images
@@ -781,31 +1088,55 @@ namespace ScreenToGif.ImageUtil
 
             var drawingVisual = new DrawingVisual();
             using (var drawingContext = drawingVisual.RenderOpen())
-            {
-                drawingContext.DrawImage(source, new Rect(0, 0, width, height));
-            }
+                drawingContext.DrawImage(source, new Rect(0, 0, width / scale, height / scale));
 
-            var resizedImage = new RenderTargetBitmap(
-                (int)Math.Round(width * scale),
-                (int)Math.Round(height * scale),
-                dpi, dpi,              // Default DPI values
-                PixelFormats.Pbgra32); // Default pixel format
+            //(int)Math.Round(width * scale)
+
+            var resizedImage = new RenderTargetBitmap(width, height, dpi, dpi, PixelFormats.Pbgra32);
             resizedImage.Render(drawingVisual);
 
             return BitmapFrame.Create(resizedImage);
         }
 
         /// <summary>
-        /// Crops a given image.
+        /// Applies the pixelate effect in given frame.
         /// </summary>
-        /// <param name="source">The BitmapSource.</param>
-        /// <param name="rect">The crop rectangle.</param>
-        /// <returns>The Cropped image.</returns>
-        public static BitmapFrame CropImage(BitmapSource source, Int32Rect rect)
+        /// <param name="image">The image to pixelate.</param>
+        /// <param name="rectangle">The area to pixelate.</param>
+        /// <param name="pixelateSize">The size of the pixel.</param>
+        /// <param name="useMedian">Calculate the median color of the pixel block.</param>
+        /// <returns>A pixelated Bitmap.</returns>
+        public static BitmapSource Pixelate(BitmapSource image, Int32Rect rectangle, int pixelateSize, bool useMedian)
         {
-            var croppedImage = new CroppedBitmap(source, rect);
+            var croppedImage = new CroppedBitmap(image, rectangle);
+            var pixelUtil = new PixelUtil(croppedImage);
+            pixelUtil.LockBits();
 
-            return BitmapFrame.Create(croppedImage);
+            //Loop through all the blocks that should be pixelated.
+            for (var xx = 0; xx < croppedImage.PixelWidth; xx += pixelateSize)
+            {
+                for (var yy = 0; yy < croppedImage.PixelHeight; yy += pixelateSize)
+                {
+                    var offsetX = pixelateSize / 2;
+                    var offsetY = pixelateSize / 2;
+
+                    if (xx + offsetX >= croppedImage.PixelWidth)
+                        offsetX = croppedImage.PixelWidth;
+
+                    if (yy + offsetY >= croppedImage.PixelHeight)
+                        offsetY = croppedImage.PixelHeight;
+
+                    //Get the pixel color in the center of the soon to be pixelated area.
+                    var pixel = useMedian ? pixelUtil.GetMedianColor(xx, yy, offsetX, offsetY) : pixelUtil.GetPixel(xx + offsetX, yy + offsetY);
+
+                    //For each pixel in the pixelate size, set it to the center color.
+                    for (var x = xx; x < xx + pixelateSize && x < croppedImage.PixelWidth; x++)
+                        for (var y = yy; y < yy + pixelateSize && y < croppedImage.PixelHeight; y++)
+                            pixelUtil.SetPixel(x, y, pixel);
+                }
+            }
+
+            return pixelUtil.UnlockBits();
         }
 
         #endregion
@@ -834,7 +1165,31 @@ namespace ScreenToGif.ImageUtil
         /// <returns>The open BitmapSource.</returns>
         public static BitmapSource SourceFrom(this string fileSource, int? size = null)
         {
-            using (var stream = new FileStream(fileSource, FileMode.Open, FileAccess.Read))
+            using (var stream = new FileStream(fileSource, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            {
+                var bitmapImage = new BitmapImage();
+                bitmapImage.BeginInit();
+                bitmapImage.CacheOption = BitmapCacheOption.OnLoad;
+
+                if (size.HasValue)
+                    bitmapImage.DecodePixelHeight = size.Value;
+
+                bitmapImage.StreamSource = stream;
+                bitmapImage.EndInit();
+                bitmapImage.Freeze(); //Just in case you want to load the image in another thread
+                return bitmapImage;
+            }
+        }
+
+        /// <summary>
+        /// Gets the BitmapSource from the source and closes the file usage.
+        /// </summary>
+        /// <param name="array">The array to open.</param>
+        /// <param name="size">The maximum height of the image.</param>
+        /// <returns>The open BitmapSource.</returns>
+        public static BitmapSource SourceFrom(this byte[] array, int? size = null)
+        {
+            using (var stream = new MemoryStream(array))
             {
                 var bitmapImage = new BitmapImage();
                 bitmapImage.BeginInit();
@@ -887,95 +1242,25 @@ namespace ScreenToGif.ImageUtil
 
                 bitmapImage.StreamSource = stream;
                 bitmapImage.EndInit();
-                bitmapImage.Freeze(); // just in case you want to load the image in another thread
+                bitmapImage.Freeze(); //Just in case you want to load the image in another thread.
 
                 var scale = Math.Round(bitmapImage.DpiX / 96d, 2);
 
-                rect = new Int32Rect((int)Math.Round(rect.X * scale), (int)Math.Round(rect.Y * scale), (int)Math.Round(rect.Width * scale), (int)Math.Round(rect.Height * scale));
+                var x = Math.Min(bitmapImage.PixelWidth - 1, Math.Max(0, (int)(rect.X * scale)));
+                var y = Math.Min(bitmapImage.PixelHeight - 1, Math.Max(0, (int)(rect.Y * scale)));
+                var width = (int)(rect.Width * scale);
+                var height = (int)(rect.Height * scale);
+
+                width = Math.Min(width, bitmapImage.PixelWidth - x);
+                height = Math.Min(height, bitmapImage.PixelHeight - y);
+
+                rect = new Int32Rect(x, y, width, height);
+
+                if (!new Int32Rect(0, 0, bitmapImage.PixelWidth, bitmapImage.PixelHeight).Contains(rect))
+                    return null;
 
                 return new CroppedBitmap(bitmapImage, rect);
             }
-        }
-
-        /// <summary>
-        /// Gets a render of the current UIElement
-        /// </summary>
-        /// <param name="source">UIElement to screenshot</param>
-        /// <param name="dpi">The DPI of the source.</param>
-        /// <param name="size">The size of the destination image.</param>
-        /// <returns>An ImageSource</returns>
-        public static RenderTargetBitmap GetRender(this Grid source, double dpi, System.Windows.Size? size = null)
-        {
-            var bounds = VisualTreeHelper.GetDescendantBounds(source);
-
-            var scale = Math.Round(dpi / 96d, 2);
-            var width = size?.Width ?? (bounds.Width + bounds.X) * scale;
-            var height = size?.Height ?? (bounds.Height + bounds.Y) * scale;
-
-            var rtb = new RenderTargetBitmap((int)Math.Round(width), (int)Math.Round(height), dpi, dpi, PixelFormats.Pbgra32);
-
-            var dv = new DrawingVisual();
-            using (var ctx = dv.RenderOpen())
-            {
-                var vb = new VisualBrush(source);
-
-                var locationRect = new System.Windows.Point(bounds.X, bounds.Y);
-                var sizeRect = new System.Windows.Size(bounds.Width, bounds.Height);
-
-                ctx.DrawRectangle(vb, null, new Rect(locationRect, sizeRect));
-            }
-
-            rtb.Render(dv);
-            return (RenderTargetBitmap)rtb.GetAsFrozen();
-        }
-
-        /// <summary>
-        /// Gets a render of the current UIElement
-        /// </summary>
-        /// <param name="source">UIElement to screenshot</param>
-        /// <param name="dpi">The DPI of the source.</param>
-        /// <param name="size">The size of the destination image.</param>
-        /// <returns>An ImageSource</returns>
-        public static RenderTargetBitmap GetRender(this UIElement source, double dpi, System.Windows.Size? size = null)
-        {
-            var bounds = VisualTreeHelper.GetDescendantBounds(source);
-
-            var scale = Math.Round(dpi / 96d, 2);
-            var width = (bounds.Width + bounds.X) * scale;
-            var height = (bounds.Height + bounds.Y) * scale;
-
-            #region If no bounds
-
-            if (bounds.IsEmpty)
-            {
-                var control = source as Control;
-
-                if (control != null)
-                {
-                    width = control.ActualWidth * scale;
-                    height = control.ActualHeight * scale;
-                }
-
-                bounds = new Rect(new System.Windows.Point(0d, 0d), new System.Windows.Point(width, height));
-            }
-
-            #endregion
-
-            var rtb = new RenderTargetBitmap((int)Math.Round(width), (int)Math.Round(height), dpi, dpi, PixelFormats.Pbgra32);
-
-            var dv = new DrawingVisual();
-            using (var ctx = dv.RenderOpen())
-            {
-                var vb = new VisualBrush(source);
-
-                var locationRect = new System.Windows.Point(bounds.X, bounds.Y);
-                var sizeRect = new System.Windows.Size(bounds.Width, bounds.Height);
-
-                ctx.DrawRectangle(vb, null, new Rect(locationRect, sizeRect));
-            }
-
-            rtb.Render(dv);
-            return (RenderTargetBitmap)rtb.GetAsFrozen();
         }
 
         /// <summary>
@@ -1029,6 +1314,104 @@ namespace ScreenToGif.ImageUtil
         }
 
         /// <summary>
+        /// Gets a render of the current UIElement
+        /// </summary>
+        /// <param name="source">UIElement to screenshot</param>
+        /// <param name="scale">The scale of the UI element.</param>
+        /// <param name="dpi">The DPI of the source.</param>
+        /// <param name="size">The size of the destination image.</param>
+        /// <returns>An ImageSource</returns>
+        public static RenderTargetBitmap GetScaledRender(this Grid source, double scale, double dpi, System.Windows.Size size)
+        {
+            var rtb = new RenderTargetBitmap((int)Math.Round(size.Width), (int)Math.Round(size.Height), dpi, dpi, PixelFormats.Pbgra32);
+
+            var dv = new DrawingVisual();
+            using (var ctx = dv.RenderOpen())
+            {
+                var vb = new VisualBrush(source);
+
+                //Gets the child bounds.
+                var bounds = VisualTreeHelper.GetDescendantBounds(source);
+                var locationRect = new System.Windows.Point(bounds.X * scale, bounds.Y * scale);
+                var sizeRect = new System.Windows.Size(bounds.Width * scale, bounds.Height * scale);
+
+                ctx.DrawRectangle(vb, null, new Rect(locationRect, sizeRect));
+            }
+
+            rtb.Render(dv);
+            return (RenderTargetBitmap)rtb.GetAsFrozen();
+        }
+
+        /// <summary>
+        /// Gets a render of the current UIElement
+        /// </summary>
+        /// <param name="source">UIElement to screenshot</param>
+        /// <param name="scale">The scale of the screen.</param>
+        /// <param name="dpi">The DPI of the output.</param>
+        /// <param name="size">The size of the destination image.</param>
+        /// <returns>An ImageSource</returns>
+        public static RenderTargetBitmap GetScaledRender(this UIElement source, double scale, double dpi, System.Windows.Size size)
+        {
+            var bounds = VisualTreeHelper.GetDescendantBounds(source);
+
+            //var width = (bounds.Width + bounds.X) * scale;
+            //var height = (bounds.Height + bounds.Y) * scale;
+
+            #region If no bounds
+
+            if (bounds.IsEmpty)
+            {
+                if (source is FrameworkElement control)
+                    bounds = new Rect(new System.Windows.Point(0d, 0d), new System.Windows.Point(control.ActualWidth * scale, control.ActualHeight * scale));
+            }
+
+            #endregion
+
+            var rtb = new RenderTargetBitmap((int)Math.Round(size.Width), (int)Math.Round(size.Height), dpi, dpi, PixelFormats.Pbgra32);
+
+            //source.Clip = new RectangleGeometry(new Rect(0, 0, rtb.Width, rtb.Height));
+            //source.ClipToBounds = true;
+
+            var dv = new DrawingVisual();
+
+            using (var ctx = dv.RenderOpen())
+            {
+                var vb = new VisualBrush(source)
+                {
+                    AutoLayoutContent = false,
+                    Stretch = Stretch.Fill
+                };
+
+                var uiScale = source.Scale();
+
+                //Test with high dpi.
+                //For some reason, an InkCanvas with Strokes going beyond the bounds will report a strange bound even if clipped.
+                if (bounds.Width > size.Width / uiScale)
+                    bounds.Width = size.Width / uiScale;
+
+                if (bounds.Height > size.Height / uiScale)
+                    bounds.Height = size.Height / uiScale;
+
+                if (bounds.X < 0)
+                    bounds.X = 0;
+
+                if (bounds.Y < 0)
+                    bounds.Y = 0;
+
+                var locationRect = new System.Windows.Point(bounds.X * scale, bounds.Y * scale);
+                var sizeRect = new System.Windows.Size(bounds.Width * scale, bounds.Height * scale);
+
+                ctx.DrawRectangle(vb, null, new Rect(locationRect, sizeRect));
+            }
+
+            rtb.Render(dv);
+
+            //source.Clip = null;
+
+            return (RenderTargetBitmap)rtb.GetAsFrozen();
+        }
+
+        /// <summary>
         /// Gets the DPI of given image.
         /// </summary>
         /// <param name="fileSource">The filename of the source.</param>
@@ -1062,7 +1445,7 @@ namespace ScreenToGif.ImageUtil
 
                 bitmapImage.StreamSource = stream;
                 bitmapImage.EndInit();
-                return bitmapImage.DpiX/96d;
+                return Math.Round(bitmapImage.DpiX / 96d, 2);
             }
         }
 
@@ -1092,11 +1475,11 @@ namespace ScreenToGif.ImageUtil
         /// <returns>The size of the image.</returns>
         public static System.Windows.Size NonScaledSize(this string fileSource)
         {
-            using (var stream = new FileStream(fileSource, FileMode.Open, FileAccess.Read))
+            using (var stream = new FileStream(fileSource, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
             {
                 var bitmapImage = new BitmapImage();
                 bitmapImage.BeginInit();
-                bitmapImage.CacheOption = BitmapCacheOption.OnDemand;
+                bitmapImage.CacheOption = BitmapCacheOption.None;
 
                 bitmapImage.StreamSource = stream;
                 bitmapImage.EndInit();
@@ -1116,6 +1499,44 @@ namespace ScreenToGif.ImageUtil
             bitmapAux.Dispose();
 
             return size;
+        }
+
+        /// <summary>
+        /// Reads a given image resource into a WinForms icon.
+        /// </summary>
+        /// <param name="imageSource">Image source pointing to an icon file (*.ico).</param>
+        /// <returns>An icon object that can be used with the taskbar area.</returns>
+        public static Icon ToIcon(this ImageSource imageSource)
+        {
+            if (imageSource == null)
+                return null;
+
+            StreamResourceInfo streamInfo = null;
+
+            try
+            {
+                var uri = new Uri(imageSource.ToString());
+                streamInfo = Application.GetResourceStream(uri);
+
+                if (streamInfo == null)
+                    throw new ArgumentException($"It was not possible to load the image source: '{imageSource}'.");
+
+                return new Icon(streamInfo.Stream);
+            }
+            catch (Win32Exception e)
+            {
+                LogWriter.Log(e, "It was not possible to load the notification area icon.", $"StreamInfo is null? {streamInfo == null}, Native error code: {e.NativeErrorCode}");
+                return null;
+            }
+            catch (Exception e)
+            {
+                LogWriter.Log(e, "It was not possible to load the notification area icon.", $"StreamInfo is null? {streamInfo == null}");
+                return null;
+            }
+            finally
+            {
+                streamInfo?.Stream?.Dispose();
+            }
         }
 
         #endregion

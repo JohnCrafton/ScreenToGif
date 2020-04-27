@@ -8,7 +8,7 @@ using System.Windows.Input;
 
 namespace ScreenToGif.Controls
 {
-    public class IntegerBox : TextBox
+    public class IntegerBox : ExtendedTextBox
     {
         private static bool _ignore;
 
@@ -41,14 +41,9 @@ namespace ScreenToGif.Controls
         public static readonly DependencyProperty UpdateOnInputProperty = DependencyProperty.Register("UpdateOnInput", typeof(bool), typeof(IntegerBox),
             new FrameworkPropertyMetadata(false, OnUpdateOnInputPropertyChanged));
 
-        public static readonly DependencyProperty IsObligatoryProperty = DependencyProperty.Register("IsObligatory", typeof(bool), typeof(IntegerBox));
-
         public static readonly DependencyProperty DefaultValueIfEmptyProperty = DependencyProperty.Register("DefaultValueIfEmpty", typeof(int), typeof(IntegerBox),
             new FrameworkPropertyMetadata(0));
-
-        public static readonly DependencyProperty IsHexadecimalProperty = DependencyProperty.Register("IsHexadecimal", typeof(bool), typeof(IntegerBox),
-            new FrameworkPropertyMetadata(false));
-
+        
         #endregion
 
         #region Property Accessor
@@ -56,22 +51,22 @@ namespace ScreenToGif.Controls
         [Bindable(true), Category("Common")]
         public int Maximum
         {
-            get { return (int)GetValue(MaximumProperty); }
-            set { SetValue(MaximumProperty, value); }
+            get => (int)GetValue(MaximumProperty);
+            set => SetValue(MaximumProperty, value);
         }
 
         [Bindable(true), Category("Common")]
         public int Value
         {
-            get { return (int)GetValue(ValueProperty); }
-            set { SetValue(ValueProperty, value); }
+            get => (int)GetValue(ValueProperty);
+            set => SetValue(ValueProperty, value);
         }
 
         [Bindable(true), Category("Common")]
         public int Minimum
         {
-            get { return (int)GetValue(MinimumProperty); }
-            set { SetValue(MinimumProperty, value); }
+            get => (int)GetValue(MinimumProperty);
+            set => SetValue(MinimumProperty, value);
         }
 
         /// <summary>
@@ -80,52 +75,38 @@ namespace ScreenToGif.Controls
         [Description("The Increment/Decrement value.")]
         public int StepValue
         {
-            get { return (int)GetValue(StepProperty); }
-            set { SetValue(StepProperty, value); }
+            get => (int)GetValue(StepProperty);
+            set => SetValue(StepProperty, value);
         }
 
         [Bindable(true), Category("Common")]
         public int Offset
         {
-            get { return (int)GetValue(OffsetProperty); }
-            set { SetValue(OffsetProperty, value); }
+            get => (int)GetValue(OffsetProperty);
+            set => SetValue(OffsetProperty, value);
         }
 
         [Bindable(true), Category("Common")]
         public double Scale
         {
-            get { return (double)GetValue(ScaleProperty); }
-            set { SetValue(ScaleProperty, value); }
+            get => (double)GetValue(ScaleProperty);
+            set => SetValue(ScaleProperty, value);
         }
 
         [Bindable(true), Category("Common")]
         public bool UpdateOnInput
         {
-            get { return (bool)GetValue(UpdateOnInputProperty); }
-            set { SetValue(UpdateOnInputProperty, value); }
-        }
-
-        [Bindable(true), Category("Common")]
-        public bool IsObligatory
-        {
-            get { return (bool)GetValue(IsObligatoryProperty); }
-            set { SetValue(IsObligatoryProperty, value); }
+            get => (bool)GetValue(UpdateOnInputProperty);
+            set => SetValue(UpdateOnInputProperty, value);
         }
 
         [Bindable(true), Category("Common")]
         public int DefaultValueIfEmpty
         {
-            get { return (int)GetValue(DefaultValueIfEmptyProperty); }
-            set { SetValue(DefaultValueIfEmptyProperty, value); }
+            get => (int)GetValue(DefaultValueIfEmptyProperty);
+            set => SetValue(DefaultValueIfEmptyProperty, value);
         }
-
-        [Bindable(true), Category("Common")]
-        public bool IsHexadecimal
-        {
-            get { return (bool)GetValue(IsHexadecimalProperty); }
-            set { SetValue(DefaultValueIfEmptyProperty, value); }
-        }
-
+        
         #endregion
 
         #region Properties Changed
@@ -148,19 +129,21 @@ namespace ScreenToGif.Controls
 
             if (intBox.Value + intBox.Offset > intBox.Maximum)
             {
+                intBox.UseTemporary = false;
                 intBox.Temporary = (intBox.Maximum / intBox.Scale) + intBox.Offset;
                 intBox.Value = intBox.Maximum + intBox.Offset;
             }
 
             if (intBox.Value + intBox.Offset < intBox.Minimum)
             {
+                intBox.UseTemporary = false;
                 intBox.Temporary = (intBox.Minimum / intBox.Scale) + intBox.Offset;
                 intBox.Value = intBox.Minimum + intBox.Offset;
             }
 
             _ignore = false;
 
-            var value = ((int)Math.Round(((intBox.UseTemporary ? intBox.Temporary : intBox.Value) - intBox.Offset) * intBox.Scale, MidpointRounding.AwayFromZero)).ToString();
+            var value = ((int)Math.Round(((intBox.UseTemporary ? intBox.Temporary : intBox.Value) - intBox.Offset) * intBox.Scale, MidpointRounding.ToEven)).ToString();
 
             if (!string.Equals(intBox.Text, value))
                 intBox.Text = value;
@@ -226,8 +209,8 @@ namespace ScreenToGif.Controls
         /// </summary>
         public event RoutedEventHandler ValueChanged
         {
-            add { AddHandler(ValueChangedEvent, value); }
-            remove { RemoveHandler(ValueChangedEvent, value); }
+            add => AddHandler(ValueChangedEvent, value);
+            remove => RemoveHandler(ValueChangedEvent, value);
         }
 
         public void RaiseValueChangedEvent()
@@ -304,7 +287,7 @@ namespace ScreenToGif.Controls
             //For example, The value 600 and the Offset 20 should display the text 580.
             //Value = (Text + Offset) * Scale.
 
-            Temporary = Convert.ToInt32(Text, CultureInfo.CurrentCulture) / Scale + Offset;
+            Temporary = Convert.ToInt32(Text, CultureInfo.CurrentUICulture) / Scale + Offset;
             Value = (int)Temporary;
 
             base.OnTextChanged(e);
@@ -326,7 +309,7 @@ namespace ScreenToGif.Controls
                 //For example, The value 600 and the Offset 20 should display the text 580.
                 //Value = Text + Offset.
                 UseTemporary = true;
-                Temporary = Convert.ToInt32(Text, CultureInfo.CurrentCulture) / Scale + Offset;
+                Temporary = Convert.ToInt32(Text, CultureInfo.CurrentUICulture) / Scale + Offset;
                 Value = (int)Math.Round(Temporary);
                 UseTemporary = false;
                 return;
@@ -378,9 +361,7 @@ namespace ScreenToGif.Controls
                 var text = e.DataObject.GetData(typeof(string)) as string;
 
                 if (!IsTextAllowed(text))
-                {
                     e.CancelCommand();
-                }
             }
             else
             {
@@ -403,9 +384,7 @@ namespace ScreenToGif.Controls
 
         private bool IsTextAllowed(string text)
         {
-            return IsHexadecimal ? 
-                Regex.IsMatch(text, "^#([A-Fa-f0-9]{8})$") : Minimum < 0 ? 
-                Regex.IsMatch(text, @"^[-]?(?:\d{1,9})?$") : Regex.IsMatch(text, @"^(?:\d{1,9})?$");
+            return Minimum < 0 ? Regex.IsMatch(text, @"^[-]?(?:[0-9]{1,9})?$") : Regex.IsMatch(text, @"^(?:[0-9]{1,9})?$");
         }
 
         #endregion

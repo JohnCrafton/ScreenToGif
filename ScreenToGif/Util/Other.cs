@@ -1,14 +1,14 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
-using ScreenToGif.FileWriters;
-using ScreenToGif.Util.Model;
-using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
+using ScreenToGif.Model;
 
 namespace ScreenToGif.Util
 {
@@ -17,6 +17,47 @@ namespace ScreenToGif.Util
     /// </summary>
     public static class Other
     {
+        private static string _assemblyShortName;
+
+        /// <summary>
+        /// Helper method for generating a "pack://" URI for a given relative file based on the
+        /// assembly that this class is in.
+        /// </summary>
+        public static Uri MakePackUri(string relativeFile)
+        {
+            var uriString = "pack://application:,,,/" + AssemblyShortName + ";component/" + relativeFile;
+            return new Uri(uriString);
+        }
+
+        private static string AssemblyShortName
+        {
+            get
+            {
+                if (_assemblyShortName != null)
+                    return _assemblyShortName;
+
+                var a = typeof(Global).Assembly;
+
+                //Pull out the short name.
+                _assemblyShortName = a.ToString().Split(',')[0];
+
+                return _assemblyShortName;
+            }
+        }
+
+        internal static string ToStringShort(this Version version)
+        {
+            var result = $"{version.Major}.{version.Minor}";
+
+            if (version.Build > 0)
+                result += $".{version.Build}";
+
+            if (version.Revision > 0)
+                result += $".{version.Revision}";
+
+            return result;
+        }
+
         public static Point TransformToScreen(Point point, Visual relativeTo)
         {
             var hwndSource = PresentationSource.FromVisual(relativeTo) as HwndSource;
@@ -59,19 +100,27 @@ namespace ScreenToGif.Util
             return new Point(pointScreenPixels.X, pointScreenPixels.Y);
         }
 
+        /// <summary>
+        /// Checks if the Aero glass is supported this system.
+        /// </summary>
+        public static bool IsGlassSupported()
+        {
+            if (Environment.OSVersion.Platform != PlatformID.Win32NT || Environment.OSVersion.Version < new Version(6, 2, 9200, 0))
+                return false;
+
+            //This version only uses white chromes.
+            if (Environment.OSVersion.Version == new Version(10, 0, 10240, 0))
+                return false;
+
+            if (Environment.OSVersion.Version > new Version(10, 0, 10240, 0) && !Glass.UsesColor)
+                return false;
+
+            return true;
+        }
+
         public static bool IsWin8OrHigher()
         {
-            if (Environment.OSVersion.Platform == PlatformID.Win32NT &&
-                Environment.OSVersion.Version >= new Version(6, 2, 9200, 0))
-            {
-                //This version only uses white chromes.
-                if (Environment.OSVersion.Version == new Version(10, 0, 10240, 0))
-                    return false;
-
-                return true;
-            }
-
-            return false;
+            return Environment.OSVersion.Platform == PlatformID.Win32NT && Environment.OSVersion.Version >= new Version(6, 2, 9200, 0);
         }
 
         public static string GetTextResource(string resourceName)
@@ -97,8 +146,16 @@ namespace ScreenToGif.Util
             {
                 LogWriter.Log(ex, "Resource Loading", resourceName);
             }
-            
+
             return result;
+        }
+
+        public static string Truncate(this string text, int size)
+        {
+            if (string.IsNullOrEmpty(text))
+                return string.Empty;
+
+            return text.Length <= size ? text : text.Substring(0, size);
         }
 
         /// <summary>
@@ -110,6 +167,64 @@ namespace ScreenToGif.Util
         public static double Gcd(double a, double b)
         {
             return b == 0 ? a : Gcd(b, a % b);
+        }
+
+        public static int DivisibleByTwo(this int number)
+        {
+            return number % 2 == 0 ? number : number + 1;
+        }
+
+        private static Size MeasureString(this TextBlock textBlock)
+        {
+            var formattedText = new FormattedText(textBlock.Text, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
+                new Typeface(textBlock.FontFamily, textBlock.FontStyle, textBlock.FontWeight, textBlock.FontStretch), textBlock.FontSize, Brushes.Black);
+
+            return new Size(formattedText.Width, formattedText.Height);
+        }
+
+        internal static Rect Offset(this Rect rect, double offset)
+        {
+            return new Rect(Math.Round(rect.Left + offset, MidpointRounding.AwayFromZero), Math.Round(rect.Top + offset, MidpointRounding.AwayFromZero),
+                Math.Round(rect.Width - (offset * 2d), MidpointRounding.AwayFromZero), Math.Round(rect.Height - (offset * 2d), MidpointRounding.AwayFromZero));
+
+            //return new Rect(rect.Left + offset, rect.Top + offset, rect.Width - (offset * 2d), rect.Height - (offset * 2d));
+        }
+
+        internal static Rect Scale(this Rect rect, double scale)
+        {
+            return new Rect(Math.Round(rect.Left * scale, MidpointRounding.AwayFromZero), Math.Round(rect.Top * scale, MidpointRounding.AwayFromZero),
+                Math.Round(rect.Width * scale, MidpointRounding.AwayFromZero), Math.Round(rect.Height * scale, MidpointRounding.AwayFromZero));
+        }
+
+        internal static Rect Limit(this Rect rect, double width, double height)
+        {
+            var newX = rect.X < 0 ? 0 : rect.X;
+            var newY = rect.Y < 0 ? 0 : rect.Y;
+
+            var newWidth = newX + rect.Width > width ? width - newX : rect.Width;
+            var newHeight = newY + rect.Height > height ? height - newY : rect.Height;
+            
+            return new Rect(newX, newY, newWidth, newHeight);
+        }
+
+        internal static Size Scale(this Size size, double scale)
+        {
+            return new Size(Math.Round(size.Width * scale, MidpointRounding.AwayFromZero), Math.Round(size.Height * scale, MidpointRounding.AwayFromZero));
+        }
+
+        internal static Point Scale(this Point point, double scale)
+        {
+            return new Point(Math.Round(point.X * scale, MidpointRounding.AwayFromZero), Math.Round(point.Y * scale, MidpointRounding.AwayFromZero));
+        }
+
+        public static double RoundUpValue(double value, int decimalpoint = 0)
+        {
+            var result = Math.Round(value, decimalpoint);
+
+            if (result < value)
+                result += Math.Pow(10, -decimalpoint);
+
+            return result;
         }
 
         /// <summary>
@@ -128,6 +243,16 @@ namespace ScreenToGif.Util
         }
 
         /// <summary>
+        /// Gets the DPI of the system.
+        /// </summary>
+        /// <returns>The DPI of the system.</returns>
+        public static double DpiOfSystem()
+        {
+            using (var source = new HwndSource(new HwndSourceParameters()))
+                return 96d * (source.CompositionTarget?.TransformToDevice.M11 ?? 1D);
+        }
+
+        /// <summary>
         /// Gets the scale of the current window.
         /// </summary>
         /// <param name="window">The Window.</param>
@@ -143,48 +268,97 @@ namespace ScreenToGif.Util
         }
 
         /// <summary>
-        /// Generates a file name.
+        /// Gets the scale of the system.
         /// </summary>
-        /// <param name="fileType">The desired output file type.</param>
-        /// <param name="frameCount">The number of frames of the recording.</param>
-        /// <returns>A valid file name.</returns>
-        [Obsolete("I should use a ExportPanel like the SaveAs")]
-        public static string FileName(string fileType, int frameCount = 0)
+        /// <returns>The scale of the system.</returns>
+        public static double ScaleOfSystem()
         {
-            #region Ask where to save.
+            using (var source = new HwndSource(new HwndSourceParameters()))
+                return source.CompositionTarget?.TransformToDevice.M11 ?? 1D;
+        }
 
-            var ofd = new SaveFileDialog {AddExtension = true};
+        public static string Remove(this string text, params string[] keys)
+        {
+            if (text == null)
+                throw new ArgumentNullException(nameof(text), "The text should not be null.");
 
-            switch (fileType)
-            {
-                case "stg":
-                case "zip":
-                    ofd.Filter = "ScreenToGif Project (*.stg)|*.stg|Zip Archive (*.zip)|*.zip";
-                    ofd.Title = "Select the File Location"; //TODO: Localize
-                    ofd.FileName = string.Format(frameCount > 1
-                                ? "Project - {0} Frames [H {1:hh-MM-ss}]"
-                                : "Project - {0} Frame [H {1:hh-mm-ss}]", frameCount, DateTime.Now);
-                    break;
-            }
+            foreach (var key in keys)
+                text = text.Replace(key, string.Empty);
 
-            ofd.InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+            return text;
+        }
 
-            var result = ofd.ShowDialog();
+        public static bool Contains(this Int32Rect first, Int32Rect second)
+        {
+            if (first.IsEmpty || second.IsEmpty || (first.X > second.X || first.Y > second.Y) || first.X + first.Width < second.X + second.Width)
+                return false;
 
-            if (!result.HasValue || !result.Value)
-                return null;
+            return first.Y + first.Height >= second.Y + second.Height;
+        }
 
-            return ofd.FileName;
+        public static List<DetectedRegion> AdjustPosition(this List<DetectedRegion> list, double x, double y)
+        {
+            foreach (var region in list)
+                region.Bounds = new Rect(new Point(region.Bounds.X - x, region.Bounds.Y - y), region.Bounds.Size);
+
+            return list;
+        }
+
+        [Obsolete("Use LocalizationHelper.Get() instead")]
+        public static string TextResource(this FrameworkElement visual, string key, string defaultValue = "")
+        {
+            return visual.TryFindResource(key) as string ?? defaultValue;
+        }
+
+        public static Brush RandomBrush()
+        {
+            var rnd = new Random();
+
+            var brushesType = typeof(Brushes);
+
+            var properties = brushesType.GetProperties();
+
+            var random = rnd.Next(properties.Length);
+
+            return (Brush)properties[random].GetValue(null, null);
+        }
+
+        /// <summary>
+        /// Gets the third value based on the other 2 parameters.
+        /// Total       =   100 %
+        /// Variable    =   percentage
+        /// </summary>
+        /// <returns>The value that was not filled.</returns>
+        public static double CrossMultiplication(double? total, double? variable, double? percentage)
+        {
+            #region Validation
+
+            //Only one of the parameters can bee null.
+            var ammount = (total.HasValue ? 0 : 1) + (variable.HasValue ? 0 : 1) + (percentage.HasValue ? 0 : 1);
+
+            if (ammount != 1)
+                throw new ArgumentException("Only one of the parameters can bee null");
 
             #endregion
+
+            if (!total.HasValue && percentage.HasValue && variable.HasValue)
+                return (percentage.Value * 100d) / variable.Value;
+
+            if (!percentage.HasValue && total.HasValue && variable.HasValue)
+                return total > 0 || total < 0 ? (variable.Value * 100d) / total.Value : 0;
+
+            if (!variable.HasValue && total.HasValue && percentage.HasValue)
+                return (percentage.Value * total.Value) / 100d;
+
+            return 0;
         }
 
         #region List
 
         public static List<FrameInfo> CopyList(this List<FrameInfo> target)
         {
-            return new List<FrameInfo>(target.Select(item => new FrameInfo(item.Path, item.Delay, 
-                new List<SimpleKeyGesture>(item.KeyList.Select(y => new SimpleKeyGesture(y.Key, y.Modifiers))))));
+            return new List<FrameInfo>(target.Select(s => new FrameInfo(s.Path, s.Delay, s.CursorX, s.CursorY, s.WasClicked, 
+                s.KeyList != null ? new List<SimpleKeyGesture>(s.KeyList.Select(y => new SimpleKeyGesture(y.Key, y.Modifiers, y.IsUppercase))) : null, s.Index)));
         }
 
         /// <summary>
@@ -193,7 +367,7 @@ namespace ScreenToGif.Util
         /// <param name="start">The start index.</param>
         /// <param name="end">The end index. If it's a lower value than the start index, the start becomes the end and vice-versa.</param>
         /// <returns>A list of ordered integers.</returns>
-        public static List<int> CreateIndexList(int start, int end)
+        public static List<int> ListOfIndexesOld(int start, int end)
         {
             if (start > end)
                 return Enumerable.Range(end, start - end + 1).ToList();
@@ -207,60 +381,12 @@ namespace ScreenToGif.Util
         /// <param name="start">The start index.</param>
         /// <param name="quantity">The quantity indexes to create.</param>
         /// <returns>A list of ordered integers.</returns>
-        public static List<int> CreateIndexList2(int start, int quantity)
+        public static List<int> ListOfIndexes(int start, int quantity)
         {
             //if (start > end)
             //    return Enumerable.Range(end, start - end + 1).ToList();
 
             return Enumerable.Range(start, quantity).ToList();
-        }
-
-        /// <summary>
-        /// Copies the List and saves the images in another folder.
-        /// </summary>
-        /// <param name="target">The List to copy</param>
-        /// <returns>The copied list.</returns>
-        public static List<FrameInfo> CopyToEncode(this List<FrameInfo> target)
-        {
-            #region Folder
-
-            var fileNameAux = Path.GetFileName(target[0].Path);
-
-            if (fileNameAux == null)
-                throw new ArgumentException("Impossible to get filename.");
-
-            var encodeFolder = Path.Combine(target[0].Path.Replace(fileNameAux, ""), "Encode " + DateTime.Now.ToString("yyyy-MM-dd hh-mm-ss"));
-
-            if (!Directory.Exists(encodeFolder))
-                Directory.CreateDirectory(encodeFolder);
-
-            #endregion
-
-            var newList = new List<FrameInfo>();
-
-            try
-            {
-                foreach (var frameInfo in target)
-                {
-                    //Changes the path of the image. Writes as an ordered list of files, replacing the old filenames.
-                    var filename = Path.Combine(encodeFolder, newList.Count + ".png");
-                    //var filename = Path.Combine(encodeFolder, Path.GetFileName(frameInfo.Path) + ".png");
-
-                    //Copy the image to the folder.
-                    File.Copy(frameInfo.Path, filename, true);
-                    //File.Copy(frameInfo.Path, filename);
-
-                    //Create the new object and add to the list.
-                    newList.Add(new FrameInfo(filename, frameInfo.Delay));
-                }
-            }
-            catch (Exception ex)
-            {
-                LogWriter.Log(ex, "");
-                throw;
-            }
-            
-            return newList;
         }
 
         /// <summary>
@@ -281,9 +407,7 @@ namespace ScreenToGif.Util
 
                 File.Copy(frame.Path, newPath);
 
-                var newFrame = new FrameInfo(newPath, frame.Delay);
-
-                list.Add(newFrame);
+                list.Add(new FrameInfo(newPath, frame.Delay, frame.CursorX, frame.CursorY, frame.WasClicked, frame.KeyList, frame.Index));
             }
 
             return list;
@@ -333,49 +457,87 @@ namespace ScreenToGif.Util
         /// <param name="routedEvent">The routed event for which to remove the event handlers.</param>
         public static void RemoveRoutedEventHandlers(UIElement element, RoutedEvent routedEvent)
         {
-            // Get the EventHandlersStore instance which holds event handlers for the specified element.
-            // The EventHandlersStore class is declared as internal.
-            var eventHandlersStoreProperty = typeof(UIElement).GetProperty(
-                "EventHandlersStore", BindingFlags.Instance | BindingFlags.NonPublic);
-            object eventHandlersStore = eventHandlersStoreProperty.GetValue(element, null);
+            try
+            {
+                //Get the EventHandlersStore instance which holds event handlers for the specified element.
+                //The EventHandlersStore class is declared as internal.
+                var eventHandlersStoreProperty = typeof(UIElement).GetProperty("EventHandlersStore", BindingFlags.Instance | BindingFlags.NonPublic);
 
-            // If no event handlers are subscribed, eventHandlersStore will be null.
-            if (eventHandlersStore == null)
-                return;
+                var eventHandlersStore = eventHandlersStoreProperty?.GetValue(element, null);
 
-            // Invoke the GetRoutedEventHandlers method on the EventHandlersStore instance 
-            // for getting an array of the subscribed event handlers.
-            var getRoutedEventHandlers = eventHandlersStore.GetType().GetMethod(
-                "GetRoutedEventHandlers", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            var routedEventHandlers = (RoutedEventHandlerInfo[])getRoutedEventHandlers.Invoke(
-                eventHandlersStore, new object[] { routedEvent });
+                //If no event handlers are subscribed, eventHandlersStore will be null.
+                if (eventHandlersStore == null)
+                    return;
 
-            // Iteratively remove all routed event handlers from the element.
-            foreach (var routedEventHandler in routedEventHandlers)
-                element.RemoveHandler(routedEvent, routedEventHandler.Handler);
+                //Invoke the GetRoutedEventHandlers method on the EventHandlersStore instance for getting an array of the subscribed event handlers.
+                var getRoutedEventHandlers = eventHandlersStore.GetType().GetMethod("GetRoutedEventHandlers", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+                var routedEventHandlers = (RoutedEventHandlerInfo[])getRoutedEventHandlers.Invoke(eventHandlersStore, new object[] { routedEvent });
+
+                //Iteratively remove all routed event handlers from the element.
+                foreach (var routedEventHandler in routedEventHandlers)
+                    element.RemoveHandler(routedEvent, routedEventHandler.Handler);
+            }
+            catch (Exception ex)
+            {
+                LogWriter.Log(ex, "Removing event handlers");
+            }
         }
 
         #endregion
 
         #region Dependencies
 
-        public static bool IsFfmpegPresent()
+        /// <summary>
+        /// When dealing with relative paths, the app will fails to point to the right folder when starting it via the "Open with..." or automatic startup methods.
+        /// </summary>
+        public static string AdjustPath(string path)
         {
+            //If the path is relative, File.Exists() was returning C:\\Windows\\System32\ffmpeg.exe when the app was lauched from the "Open with" context menu.
+            //So, in order to get the correct location, I need to combine the current base directory with the relative path.
+            if (!string.IsNullOrWhiteSpace(path) && !Path.IsPathRooted(path))
+            {
+                var adjusted = path.StartsWith("." + Path.AltDirectorySeparatorChar) ? path.TrimStart('.', Path.AltDirectorySeparatorChar) :
+                    path.StartsWith("." + Path.DirectorySeparatorChar) ? path.TrimStart('.', Path.DirectorySeparatorChar) : path;
+
+                return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, adjusted);
+            }
+
+            return path;
+        }
+
+        public static bool IsFfmpegPresent(bool ignoreEnvironment = false, bool ignoreEmpty = false)
+        {
+            //If the path is relative, File.Exists() was returning C:\\Windows\\System32\ffmpeg.exe when the app was lauched from the "Open with" context menu.
+            //So, in order to get the correct location, I need to combine the current base directory with the relative path.
+            var realPath = AdjustPath(UserSettings.All.FfmpegLocation);
+
             //File location already choosen or detected.
-            if (!string.IsNullOrWhiteSpace(UserSettings.All.FfmpegLocation) &&
-                File.Exists(UserSettings.All.FfmpegLocation))
+            if (!string.IsNullOrWhiteSpace(realPath) && File.Exists(realPath))
                 return true;
+
+            //The path was not selected, but the file exists inside the same folder.
+            if (!ignoreEmpty && string.IsNullOrWhiteSpace(UserSettings.All.FfmpegLocation) && File.Exists(AdjustPath("ffmpeg.exe")))
+            {
+                UserSettings.All.FfmpegLocation = "ffmpeg.exe";
+                return true;
+            }
+
+            //If not found by direct/relative path, ignore the environment variables.
+            if (ignoreEnvironment)
+                return false;
 
             #region Check Environment Variables
 
-            var variable = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine) + ";" + 
+            var variable = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine) + ";" +
                 Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User);
 
-            foreach (var path in variable.Split(';'))
+            foreach (var path in variable.Split(';').Where(w => !string.IsNullOrWhiteSpace(w)))
             {
                 try
                 {
-                    if (!File.Exists(Path.Combine(path, "ffmpeg.exe"))) continue;
+                    if (!File.Exists(Path.Combine(path, "ffmpeg.exe")))
+                        continue;
                 }
                 catch (Exception ex)
                 {
@@ -384,6 +546,105 @@ namespace ScreenToGif.Util
                 }
 
                 UserSettings.All.FfmpegLocation = Path.Combine(path, "ffmpeg.exe");
+                return true;
+            }
+
+            #endregion
+
+            return false;
+        }
+
+        public static bool IsGifskiPresent(bool ignoreEnvironment = false, bool ignoreEmpty = false)
+        {
+            //If the path is relative, File.Exists() was returning C:\\Windows\\System32\Gifski.dll when the app was lauched from the "Open with" context menu.
+            //So, in order to get the correct location, I need to combine the current base directory with the relative path.
+            var realPath = AdjustPath(UserSettings.All.GifskiLocation);
+
+            //File location already choosen or detected.
+            if (!string.IsNullOrWhiteSpace(realPath) && File.Exists(realPath))
+                return true;
+
+            //The path was not selected, but the file exists inside the same folder.
+            if (!ignoreEmpty && string.IsNullOrWhiteSpace(UserSettings.All.GifskiLocation) && File.Exists(AdjustPath("gifski.dll")))
+            {
+                UserSettings.All.GifskiLocation = "gifski.dll";
+                return true;
+            }
+
+            //If not found by direct/relative path, ignore the environment variables.
+            if (ignoreEnvironment)
+                return false;
+
+            #region Check Environment Variables
+
+            var variable = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine) + ";" +
+                Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User);
+
+            foreach (var path in variable.Split(';').Where(w => !string.IsNullOrWhiteSpace(w)))
+            {
+                try
+                {
+                    if (!File.Exists(Path.Combine(path, "gifski.dll")))
+                        continue;
+                }
+                catch (Exception ex)
+                {
+                    //LogWriter.Log(ex, "Checking the path variables", path);
+                    continue;
+                }
+
+                UserSettings.All.GifskiLocation = Path.Combine(path, "gifski.dll");
+                return true;
+            }
+
+            #endregion
+
+            return false;
+        }
+
+        public static bool IsSharpDxPresent(bool ignoreEnvironment = false, bool ignoreEmpty = false)
+        {
+            //So, in order to get the correct location, I need to combine the current base directory with the relative path.
+            var realPath = AdjustPath(string.IsNullOrWhiteSpace(UserSettings.All.SharpDxLocationFolder) ? "." + Path.DirectorySeparatorChar : UserSettings.All.SharpDxLocationFolder);
+
+            //All these libraries should exist:
+            //SharpDX.dll
+            //SharpDX.DXGI.dll
+            //SharpDX.Direct3D11.dll
+
+            //File location already choosen or detected.
+            if (realPath != null && File.Exists(Path.Combine(realPath, "SharpDX.dll")) && File.Exists(Path.Combine(realPath, "SharpDX.DXGI.dll")) && File.Exists(Path.Combine(realPath, "SharpDX.Direct3D11.dll")))
+            {
+                //The path was not selected, but the file exists inside the same folder.
+                if (!ignoreEmpty && string.IsNullOrWhiteSpace(UserSettings.All.SharpDxLocationFolder))
+                    UserSettings.All.SharpDxLocationFolder = "." + Path.DirectorySeparatorChar;
+
+                return true;
+            }
+
+            //If not found by direct/relative path, ignore the environment variables.
+            if (ignoreEnvironment)
+                return false;
+
+            #region Check Environment Variables
+
+            var variable = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine) + ";" +
+                Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User);
+
+            foreach (var path in variable.Split(';').Where(w => !string.IsNullOrWhiteSpace(w)))
+            {
+                try
+                {
+                    if (!File.Exists(Path.Combine(path, "SharpDX.dll")) || !File.Exists(Path.Combine(path, "SharpDX.DXGI.dll")) || !File.Exists(Path.Combine(path, "SharpDX.Direct3D11.dll")))
+                        continue;
+                }
+                catch (Exception ex)
+                {
+                    //LogWriter.Log(ex, "Checking the path variables", path);
+                    continue;
+                }
+
+                UserSettings.All.GifskiLocation = path;
                 return true;
             }
 
